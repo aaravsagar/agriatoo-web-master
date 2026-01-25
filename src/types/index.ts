@@ -1,0 +1,78 @@
+export interface User {
+  id: string;
+  email: string;
+  role: 'admin' | 'seller' | 'delivery' | 'customer';
+  name: string;
+  phone: string;
+  address?: string;
+  pincode?: string;
+  shopName?: string;
+  deliveryRadius?: number;
+  coveredPincodes?: string[];
+  createdAt: Date;
+  isActive: boolean;
+}
+
+export interface Product {
+  id: string;
+  sellerId: string;
+  sellerName: string;
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  unit: string;
+  stock: number;
+  images: string[];
+  coveredPincodes: string[];
+  createdAt: Date;
+  updatedAt: Date;
+  isActive: boolean;
+}
+
+export interface CartItem {
+  productId: string;
+  product: Product;
+  quantity: number;
+}
+
+export interface Order {
+  id: string;
+  orderId: string; // Unique order ID for tracking
+  customerId?: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  customerPincode: string;
+  sellerId: string;
+  sellerName: string;
+  sellerShopName: string;
+  sellerAddress: string;
+  deliveryBoyId?: string;
+  deliveryBoyName?: string;
+  items: OrderItem[];
+  totalAmount: number;
+  status: 'received' | 'packed' | 'out_for_delivery' | 'delivered' | 'not_delivered';
+  paymentMethod: 'cod';
+  deliveryReason?: string; // For not_delivered orders
+  createdAt: Date;
+  updatedAt: Date;
+  packedAt?: Date;
+  outForDeliveryAt?: Date;
+  deliveredAt?: Date;
+}
+
+export interface OrderItem {
+  productId: string;
+  productName: string;
+  price: number;
+  quantity: number;
+  unit: string;
+}
+
+export interface DeliveryAssignment {
+  deliveryBoyId: string;
+  orderIds: string[];
+  assignedAt: Date;
+  completedAt?: Date;
+}
