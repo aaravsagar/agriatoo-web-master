@@ -16,7 +16,6 @@ function AppContent() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
 
-  // ✅ ALWAYS call hooks at top level
   useEffect(() => {
     if (!loading && user && window.location.pathname === '/') {
       const dashboardRoutes: Record<string, string> = {
@@ -47,7 +46,7 @@ function AppContent() {
           <Route path="/cart" element={<Cart />} />
           <Route path="/login" element={<Login />} />
 
-          {/* Protected Routes */}
+          {/* Admin Protected Route */}
           <Route
             path="/admin/*"
             element={
@@ -57,23 +56,11 @@ function AppContent() {
             }
           />
 
-          <Route
-            path="/seller/*"
-            element={
-              <ProtectedRoute requiredRole="seller">
-                <SellerDashboard />
-              </ProtectedRoute>
-            }
-          />
+          {/* Seller Route (No Protection) */}
+          <Route path="/seller/*" element={<SellerDashboard />} />
 
-          <Route
-            path="/delivery/*"
-            element={
-              <ProtectedRoute requiredRole="delivery">
-                <DeliveryDashboard />
-              </ProtectedRoute>
-            }
-          />
+          {/* Delivery Route (No Protection) */}
+          <Route path="/delivery/*" element={<DeliveryDashboard />} />
         </Routes>
       </main>
 
