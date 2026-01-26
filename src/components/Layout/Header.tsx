@@ -28,7 +28,7 @@ const Header: React.FC = () => {
       case 'seller':
         return '/seller';
       case 'delivery':
-        return 'http://localhost:5173/delivery';
+        return '/delivery';
       default:
         return '/';
     }

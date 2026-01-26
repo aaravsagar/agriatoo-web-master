@@ -16,12 +16,18 @@ const AdminProducts: React.FC = () => {
 
   const fetchProducts = async () => {
     try {
-      const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+      // Simplified query without orderBy to avoid composite indexes
+      const q = query(collection(db, 'products'));
       const snapshot = await getDocs(q);
-      const productsData = snapshot.docs.map(doc => ({
+      let productsData = snapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate() || new Date()
       })) as Product[];
+      
+      // Frontend sorting by creation date (newest first)
+      productsData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      
       setProducts(productsData);
     } catch (error) {
       console.error('Error fetching products:', error);

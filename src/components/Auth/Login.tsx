@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../../config/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../../config/firebase';
 import { ADMIN_CREDENTIALS } from '../../config/constants';
 import { Eye, EyeOff, Loader } from 'lucide-react';
 
@@ -15,7 +16,6 @@ const Login: React.FC = () => {
   
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as any)?.from?.pathname || '/';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,21 +23,23 @@ const Login: React.FC = () => {
     setError('');
 
     try {
-      // Check for admin credentials first (hardcoded)
-      if (email === ADMIN_CREDENTIALS.email && password === ADMIN_CREDENTIALS.password) {
-        // Create a session for admin (you might want to use a different approach)
-        await signInWithEmailAndPassword(auth, email, password);
-        navigate('/admin');
-        return;
-      }
-
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
-        await createUserWithEmailAndPassword(auth, email, password);
+        const { user } = await createUserWithEmailAndPassword(auth, email, password);
+        
+        // Create user document in Firestore for new users
+        await setDoc(doc(db, 'users', user.uid), {
+          email: email,
+          name: email.split('@')[0], // Default name from email
+          phone: '',
+          role: 'customer',
+          isActive: true,
+          createdAt: new Date()
+        });
       }
       
-      navigate(from, { replace: true });
+      // Navigation will be handled by useAuth hook and role detection
     } catch (error: any) {
       setError(error.message);
     } finally {
@@ -45,24 +47,46 @@ const Login: React.FC = () => {
     }
   };
 
+  // Add useEffect to handle navigation after auth state changes
+  React.useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user && !loading) {
+        // Check if admin
+        if (user.email === ADMIN_CREDENTIALS.email) {
+          navigate('/admin', { replace: true });
+        } else {
+          // Will be handled by useAuth hook for other roles
+          const from = (location.state as any)?.from?.pathname;
+          if (from && from !== '/login') {
+            navigate(from, { replace: true });
+          } else {
+            navigate('/', { replace: true });
+          }
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [navigate, location, loading]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-green-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
           <div className="flex justify-center">
-            <div className="w-12 h-12 bg-green-600 rounded-lg flex items-center justify-center">
+            <div className="w-12 h-12 bg-green-500 rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-lg">A</span>
             </div>
           </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          <h2 className="mt-6 text-center text-3xl font-extrabold text-white">
             {isLogin ? 'Sign in to your account' : 'Create new account'}
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="mt-2 text-center text-sm text-gray-400">
             {isLogin ? "Don't have an account? " : "Already have an account? "}
             <button
               type="button"
               onClick={() => setIsLogin(!isLogin)}
-              className="font-medium text-green-600 hover:text-green-500"
+              className="font-medium text-green-400 hover:text-green-300"
             >
               {isLogin ? 'Sign up' : 'Sign in'}
             </button>
@@ -78,7 +102,7 @@ const Login: React.FC = () => {
                 name="email"
                 type="email"
                 required
-                className="appearance-none rounded-lg relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-green-500 focus:border-green-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-lg relative block w-full px-3 py-3 bg-gray-800 border border-gray-600 placeholder-gray-400 text-white focus:outline-none focus:ring-green-500 focus:border-green-500 focus:z-10 sm:text-sm"
                 placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -92,7 +116,7 @@ const Login: React.FC = () => {
                 name="password"
                 type={showPassword ? 'text' : 'password'}
                 required
-                className="appearance-none rounded-lg relative block w-full px-3 py-3 pr-10 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-green-500 focus:border-green-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-lg relative block w-full px-3 py-3 pr-10 bg-gray-800 border border-gray-600 placeholder-gray-400 text-white focus:outline-none focus:ring-green-500 focus:border-green-500 focus:z-10 sm:text-sm"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -103,16 +127,16 @@ const Login: React.FC = () => {
                 onClick={() => setShowPassword(!showPassword)}
               >
                 {showPassword ? (
-                  <EyeOff className="h-5 w-5 text-gray-400" />
+                  <EyeOff className="h-5 w-5 text-gray-500" />
                 ) : (
-                  <Eye className="h-5 w-5 text-gray-400" />
+                  <Eye className="h-5 w-5 text-gray-500" />
                 )}
               </button>
             </div>
           </div>
 
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">
+            <div className="bg-red-900 border border-red-700 text-red-300 px-4 py-3 rounded-lg">
               {error}
             </div>
           )}
@@ -121,7 +145,7 @@ const Login: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-green-500 hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <Loader className="w-5 h-5 animate-spin" />
@@ -132,18 +156,19 @@ const Login: React.FC = () => {
           </div>
 
           <div className="text-center">
-            <Link 
-              to="/"
-              className="text-green-600 hover:text-green-500 text-sm font-medium"
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="text-green-400 hover:text-green-300 text-sm font-medium"
             >
               ← Back to Home
-            </Link>
+            </button>
           </div>
 
           {isLogin && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h3 className="font-medium text-blue-900 mb-2">Demo Credentials:</h3>
-              <p className="text-sm text-blue-800">
+            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+              <h3 className="font-medium text-white mb-2">Demo Credentials:</h3>
+              <p className="text-sm text-gray-300">
                 <strong>Admin:</strong> admin@agriatoo.com / admin123
               </p>
             </div>

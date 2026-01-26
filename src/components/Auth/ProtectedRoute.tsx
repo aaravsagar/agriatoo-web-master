@@ -30,9 +30,10 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     const dashboardRoutes = {
       admin: '/admin',
       seller: '/seller',
-      delivery: 'http://localhost:5173/delivery'
+      delivery: '/delivery'
     };
-    return <Navigate to={dashboardRoutes[user.role] || '/'} replace />;
+    const targetRoute = dashboardRoutes[user.role as keyof typeof dashboardRoutes];
+    return <Navigate to={targetRoute || '/'} replace />;
   }
 
   return <>{children}</>;

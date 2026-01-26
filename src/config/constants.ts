@@ -1,7 +1,7 @@
 // Admin credentials (hardcoded outside Firebase)
 export const ADMIN_CREDENTIALS = {
   email: 'admin@agriatoo.com',
-  password: 'admin123'
+  password: 'admin123',
 };
 
 // Order statuses
@@ -10,15 +10,15 @@ export const ORDER_STATUSES = {
   PACKED: 'packed',
   OUT_FOR_DELIVERY: 'out_for_delivery',
   DELIVERED: 'delivered',
-  NOT_DELIVERED: 'not_delivered'
+  NOT_DELIVERED: 'not_delivered',
 } as const;
 
-// User roles
+// ✅ Standardized user roles (VERY IMPORTANT)
 export const USER_ROLES = {
   ADMIN: 'admin',
   SELLER: 'seller',
   DELIVERY: 'delivery',
-  CUSTOMER: 'customer'
+  FARMER: 'farmer', // ✅ use FARMER instead of CUSTOMER
 } as const;
 
 // Product categories
@@ -28,7 +28,7 @@ export const PRODUCT_CATEGORIES = [
   'Seeds',
   'Tools',
   'Irrigation',
-  'Organic Products'
+  'Organic Products',
 ];
 
 // Sample PIN codes for Indian states (simplified dataset)
@@ -43,5 +43,4 @@ export const PINCODE_DATA = [
   { pincode: '700001', area: 'Kolkata GPO', state: 'West Bengal' },
   { pincode: '380001', area: 'Ahmedabad', state: 'Gujarat' },
   { pincode: '302001', area: 'Jaipur', state: 'Rajasthan' },
-  // Add more PIN codes as needed
 ];

@@ -18,14 +18,19 @@ const AdminOrders: React.FC = () => {
 
   const fetchOrders = async () => {
     try {
-      const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+      // Simplified query without orderBy
+      const q = query(collection(db, 'orders'));
       const snapshot = await getDocs(q);
-      const ordersData = snapshot.docs.map(doc => ({
+      let ordersData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
         createdAt: doc.data().createdAt?.toDate() || new Date(),
         updatedAt: doc.data().updatedAt?.toDate() || new Date()
       })) as Order[];
+      
+      // Frontend sorting by creation date (newest first)
+      ordersData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      
       setOrders(ordersData);
     } catch (error) {
       console.error('Error fetching orders:', error);

@@ -22,38 +22,36 @@ const HomePage: React.FC = () => {
 
   const fetchProducts = async () => {
     try {
-      let q = query(
+      // Simplified query without composite indexes
+      const q = query(
         collection(db, 'products'),
-        where('isActive', '==', true),
-        orderBy('createdAt', 'desc'),
-        limit(20)
+        where('isActive', '==', true)
       );
 
-      if (selectedCategory) {
-        q = query(
-          collection(db, 'products'),
-          where('isActive', '==', true),
-          where('category', '==', selectedCategory),
-          orderBy('createdAt', 'desc'),
-          limit(20)
-        );
-      }
-
       const snapshot = await getDocs(q);
-      const productsData = snapshot.docs.map(doc => ({
+      let productsData = snapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate() || new Date()
       })) as Product[];
 
+      // Frontend filtering and sorting
+      if (selectedCategory) {
+        productsData = productsData.filter(product => product.category === selectedCategory);
+      }
+
       // Filter by pincode if provided
-      let filteredProducts = productsData;
       if (pincode) {
-        filteredProducts = productsData.filter(product => 
+        productsData = productsData.filter(product => 
           product.coveredPincodes.includes(pincode)
         );
       }
 
-      setProducts(filteredProducts);
+      // Sort by creation date (newest first) and limit to 20
+      productsData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      productsData = productsData.slice(0, 20);
+
+      setProducts(productsData);
     } catch (error) {
       console.error('Error fetching products:', error);
     } finally {
