@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -9,7 +9,7 @@ import { Plus, Minus, Trash2, ArrowLeft } from 'lucide-react';
 import { ORDER_STATUSES } from '../../config/constants';
 
 const Cart: React.FC = () => {
-  const { cartItems, updateQuantity, removeFromCart, clearCart, totalAmount } = useCart();
+  const { cartItems, updateQuantity, removeFromCart, clearCart, totalAmount, isInitialized } = useCart();
   const navigate = useNavigate();
   
   const [customerDetails, setCustomerDetails] = useState({
@@ -21,6 +21,14 @@ const Cart: React.FC = () => {
   const [isCheckout, setIsCheckout] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Debug: Log cart state
+  useEffect(() => {
+    console.log('🛒 Cart Component - Items:', cartItems.length);
+    console.log('🛒 Cart Items:', cartItems);
+    console.log('🛒 Total Amount:', totalAmount);
+    console.log('🛒 Initialized:', isInitialized);
+  }, [cartItems, totalAmount, isInitialized]);
 
   const handleQuantityChange = (productId: string, change: number) => {
     const item = cartItems.find(item => item.productId === productId);
@@ -82,8 +90,8 @@ const Cart: React.FC = () => {
           customerPincode: customerDetails.pincode,
           sellerId,
           sellerName: sellerProduct.sellerName,
-          sellerShopName: sellerProduct.sellerName, // Assuming shop name is same as seller name
-          sellerAddress: '', // Will be updated by seller
+          sellerShopName: sellerProduct.sellerName,
+          sellerAddress: '',
           items: items.map(item => ({
             productId: item.productId,
             productName: item.product.name,
@@ -114,6 +122,20 @@ const Cart: React.FC = () => {
     }
   };
 
+  // Show loading state while cart is initializing
+  if (!isInitialized) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center py-16">
+            <div className="w-8 h-8 border-2 border-green-200 border-t-green-600 rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading cart...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (cartItems.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 py-12">
@@ -138,7 +160,9 @@ const Cart: React.FC = () => {
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Shopping Cart</h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            Shopping Cart ({cartItems.length} {cartItems.length === 1 ? 'item' : 'items'})
+          </h1>
           <Link
             to="/"
             className="flex items-center text-green-600 hover:text-green-700"
@@ -151,57 +175,70 @@ const Cart: React.FC = () => {
         <div className="bg-white rounded-lg shadow-md">
           {/* Cart Items */}
           <div className="p-6">
-            {cartItems.map(item => (
-              <div key={item.productId} className="flex items-center py-4 border-b border-gray-200 last:border-b-0">
-                <div className="w-16 h-16 bg-gray-200 rounded-lg flex-shrink-0">
-                  {item.product.images?.[0] ? (
-                    <img
-                      src={item.product.images[0]}
-                      alt={item.product.name}
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-green-100 rounded-lg flex items-center justify-center">
-                      <span className="text-green-600 text-xs">No Image</span>
-                    </div>
-                  )}
-                </div>
+            {cartItems.map(item => {
+              // Defensive check for each item
+              if (!item || !item.product) {
+                console.warn('Invalid cart item:', item);
+                return null;
+              }
 
-                <div className="ml-4 flex-grow">
-                  <h3 className="text-lg font-medium text-gray-900">{item.product.name}</h3>
-                  <p className="text-sm text-gray-600">By {item.product.sellerName}</p>
-                  <p className="text-lg font-semibold text-green-600">
-                    ₹{item.product.price}/{item.product.unit}
-                  </p>
-                </div>
+              return (
+                <div key={item.productId} className="flex items-center py-4 border-b border-gray-200 last:border-b-0">
+                  <div className="w-16 h-16 bg-gray-200 rounded-lg flex-shrink-0">
+                    {item.product.images && item.product.images.length > 0 && item.product.images[0] ? (
+                      <img
+                        src={item.product.images[0]}
+                        alt={item.product.name}
+                        className="w-full h-full object-cover rounded-lg"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-green-100 rounded-lg flex items-center justify-center">
+                        <span className="text-green-600 text-xs">No Image</span>
+                      </div>
+                    )}
+                  </div>
 
-                <div className="flex items-center space-x-3">
-                  <button
-                    onClick={() => handleQuantityChange(item.productId, -1)}
-                    className="p-1 rounded-full bg-gray-100 hover:bg-gray-200"
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <span className="w-12 text-center font-medium">{item.quantity}</span>
-                  <button
-                    onClick={() => handleQuantityChange(item.productId, 1)}
-                    className="p-1 rounded-full bg-gray-100 hover:bg-gray-200"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
+                  <div className="ml-4 flex-grow">
+                    <h3 className="text-lg font-medium text-gray-900">{item.product.name || 'Unknown Product'}</h3>
+                    <p className="text-sm text-gray-600">By {item.product.sellerName || 'Unknown Seller'}</p>
+                    <p className="text-lg font-semibold text-green-600">
+                      ₹{item.product.price || 0}/{item.product.unit || 'unit'}
+                    </p>
+                  </div>
 
-                <div className="ml-4 text-right">
-                  <p className="text-lg font-semibold">₹{(item.product.price * item.quantity).toFixed(2)}</p>
-                  <button
-                    onClick={() => removeFromCart(item.productId)}
-                    className="text-red-600 hover:text-red-700 mt-2"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={() => handleQuantityChange(item.productId, -1)}
+                      className="p-1 rounded-full bg-gray-100 hover:bg-gray-200"
+                      disabled={item.quantity <= 1}
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="w-12 text-center font-medium">{item.quantity}</span>
+                    <button
+                      onClick={() => handleQuantityChange(item.productId, 1)}
+                      className="p-1 rounded-full bg-gray-100 hover:bg-gray-200"
+                      disabled={item.quantity >= item.product.stock}
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="ml-4 text-right">
+                    <p className="text-lg font-semibold">₹{((item.product.price || 0) * item.quantity).toFixed(2)}</p>
+                    <button
+                      onClick={() => removeFromCart(item.productId)}
+                      className="text-red-600 hover:text-red-700 mt-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Checkout Section */}

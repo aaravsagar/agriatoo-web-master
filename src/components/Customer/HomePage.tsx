@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { Link, useNavigate } from 'react-router-dom';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { Product } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../config/constants';
 import { Search, ShoppingCart, Truck, Shield, Users } from 'lucide-react';
 import { useCart } from '../../hooks/useCart';
-import ProductCard from './ProductCard';
+import ProductCard from '../../components/Customer/ProductCard';
 
 const HomePage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -14,28 +14,50 @@ const HomePage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [pincode, setPincode] = useState('');
   const [loading, setLoading] = useState(true);
-  const { addToCart } = useCart();
+  const [showNotification, setShowNotification] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const { addToCart, totalItems } = useCart();
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchProducts();
   }, [selectedCategory, pincode]);
 
   const fetchProducts = async () => {
+    setLoading(true);
     try {
-      // Simplified query without composite indexes
+      // Query active products
       const q = query(
         collection(db, 'products'),
         where('isActive', '==', true)
       );
 
       const snapshot = await getDocs(q);
-      let productsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate() || new Date()
-      })) as Product[];
+      let productsData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || '',
+          description: data.description || '',
+          price: data.price || 0,
+          category: data.category || '',
+          unit: data.unit || 'unit',
+          stock: data.stock || 0,
+          images: data.images || [],
+          sellerName: data.sellerName || '',
+          sellerId: data.sellerId || '',
+          coveredPincodes: data.coveredPincodes || [],
+          isActive: data.isActive || false,
+          createdAt: data.createdAt?.toDate() || new Date()
+        } as Product;
+      });
 
-      // Frontend filtering and sorting
+      // Filter out any invalid products
+      productsData = productsData.filter(product => 
+        product.name && product.id && typeof product.price === 'number'
+      );
+
+      // Frontend filtering by category
       if (selectedCategory) {
         productsData = productsData.filter(product => product.category === selectedCategory);
       }
@@ -43,6 +65,7 @@ const HomePage: React.FC = () => {
       // Filter by pincode if provided
       if (pincode) {
         productsData = productsData.filter(product => 
+          Array.isArray(product.coveredPincodes) && 
           product.coveredPincodes.includes(pincode)
         );
       }
@@ -51,21 +74,55 @@ const HomePage: React.FC = () => {
       productsData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       productsData = productsData.slice(0, 20);
 
+      console.log('Fetched products:', productsData.length);
       setProducts(productsData);
     } catch (error) {
       console.error('Error fetching products:', error);
+      setProducts([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.description.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleAddToCart = (product: Product) => {
+    if (!product || !product.id) {
+      console.error('Invalid product:', product);
+      return;
+    }
+
+    try {
+      addToCart(product);
+      setNotificationMessage(`${product.name} added to cart!`);
+      setShowNotification(true);
+      setTimeout(() => setShowNotification(false), 3000);
+    } catch (error) {
+      console.error('Error adding to cart:', error);
+      setNotificationMessage('Failed to add item to cart');
+      setShowNotification(true);
+      setTimeout(() => setShowNotification(false), 3000);
+    }
+  };
+
+  const filteredProducts = products.filter(product => {
+    if (!product || !product.name) return false;
+    
+    const searchLower = searchTerm.toLowerCase();
+    const nameMatch = product.name.toLowerCase().includes(searchLower);
+    const descMatch = product.description?.toLowerCase().includes(searchLower) || false;
+    
+    return nameMatch || descMatch;
+  });
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Notification Toast */}
+      {showNotification && (
+        <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg flex items-center space-x-2 animate-slide-in">
+          <ShoppingCart className="w-5 h-5" />
+          <span>{notificationMessage}</span>
+        </div>
+      )}
+
       {/* Hero Section */}
       <section className="bg-gradient-to-r from-green-600 to-green-800 text-white py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -148,6 +205,20 @@ const HomePage: React.FC = () => {
                 <option key={category} value={category}>{category}</option>
               ))}
             </select>
+            
+            {/* Cart Button with Badge */}
+            <Link
+              to="/cart"
+              className="relative bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
+            >
+              <ShoppingCart className="w-5 h-5" />
+              <span>Cart</span>
+              {totalItems > 0 && (
+                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                  {totalItems}
+                </span>
+              )}
+            </Link>
           </div>
         </div>
       </section>
@@ -167,11 +238,13 @@ const HomePage: React.FC = () => {
           ) : filteredProducts.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {filteredProducts.map(product => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onAddToCart={() => addToCart(product)}
-                />
+                product && product.id ? (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    onAddToCart={() => handleAddToCart(product)}
+                  />
+                ) : null
               ))}
             </div>
           ) : (
@@ -197,15 +270,31 @@ const HomePage: React.FC = () => {
           <p className="text-xl mb-8 text-green-100">
             Browse our complete catalog and find the best agricultural products
           </p>
-          <Link
-            to="/cart"
+          <button
+            onClick={() => navigate('/cart')}
             className="inline-flex items-center bg-white text-green-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors"
           >
             <ShoppingCart className="w-5 h-5 mr-2" />
-            View Cart
-          </Link>
+            View Cart {totalItems > 0 && `(${totalItems})`}
+          </button>
         </div>
       </section>
+
+      <style>{`
+        @keyframes slide-in {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        .animate-slide-in {
+          animation: slide-in 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 };
