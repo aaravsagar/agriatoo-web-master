@@ -45,12 +45,14 @@ const Cart: React.FC = () => {
     if (!customerDetails.pincode.trim()) return 'PIN code is required';
     if (!isPincodeValid(customerDetails.pincode)) return 'Invalid PIN code';
     
-    // Check if all products are available for the pincode
-    const unavailableProducts = cartItems.filter(item => 
-      !item.product.coveredPincodes.includes(customerDetails.pincode)
-    );
-    if (unavailableProducts.length > 0) {
-      return `Some products are not available for PIN code ${customerDetails.pincode}`;
+    // Check if all sellers cover the pincode (since orders are grouped by seller)
+    const sellers = [...new Set(cartItems.map(item => item.product.sellerId))];
+    for (const sellerId of sellers) {
+      const sellerItems = cartItems.filter(item => item.product.sellerId === sellerId);
+      const coveredPincodes = sellerItems[0]?.product?.coveredPincodes;
+      if (!coveredPincodes || !Array.isArray(coveredPincodes) || !coveredPincodes.includes(customerDetails.pincode)) {
+        return `Products from seller ${sellerItems[0]?.product?.sellerName || 'Unknown'} are not available for PIN code ${customerDetails.pincode}`;
+      }
     }
     
     return null;

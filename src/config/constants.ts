@@ -41,6 +41,6 @@ export const PINCODE_DATA = [
   { pincode: '560001', area: 'Bangalore GPO', state: 'Karnataka' },
   { pincode: '600001', area: 'Chennai GPO', state: 'Tamil Nadu' },
   { pincode: '700001', area: 'Kolkata GPO', state: 'West Bengal' },
-  { pincode: '380001', area: 'Ahmedabad', state: 'Gujarat' },
+  { pincode: '380052', area: 'Ahmedabad', state: 'Gujarat' },
   { pincode: '302001', area: 'Jaipur', state: 'Rajasthan' },
 ];

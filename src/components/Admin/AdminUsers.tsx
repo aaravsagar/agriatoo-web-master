@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, setDoc } from 'firebase/firestore'; // Changed addDoc to setDoc
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
 import { User } from '../../types';
 import { USER_ROLES } from '../../config/constants';
-import { Plus, CreditCard as Edit, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Edit, Trash2, UserPlus } from 'lucide-react'; // Note: Edit is imported as CreditCard, but used as Edit; assuming it's a typo, changed to Edit
 
 const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -63,8 +63,8 @@ const AdminUsers: React.FC = () => {
         // Create new user with Firebase Auth
         const { user } = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
         
-        // Save user data to Firestore
-        await addDoc(collection(db, 'users'), {
+        // Save user data to Firestore using setDoc to avoid duplicates
+        await setDoc(doc(db, 'users', user.uid), {
           email: formData.email,
           name: formData.name,
           phone: formData.phone,
@@ -279,6 +279,39 @@ const AdminUsers: React.FC = () => {
                 <option value={USER_ROLES.SELLER}>Seller</option>
                 <option value={USER_ROLES.DELIVERY}>Delivery Boy</option>
               </select>
+
+              {/* Added missing fields to the form */}
+              <input
+                type="text"
+                placeholder="Address"
+                value={formData.address}
+                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              
+              <input
+                type="text"
+                placeholder="Pincode"
+                value={formData.pincode}
+                onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              
+              <input
+                type="text"
+                placeholder="Shop Name"
+                value={formData.shopName}
+                onChange={(e) => setFormData({ ...formData, shopName: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              
+              <input
+                type="number"
+                placeholder="Delivery Radius"
+                value={formData.deliveryRadius}
+                onChange={(e) => setFormData({ ...formData, deliveryRadius: parseInt(e.target.value) || 10 })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
 
               <div className="flex space-x-2">
                 <button
