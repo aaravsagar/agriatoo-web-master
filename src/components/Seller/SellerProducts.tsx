@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, orderBy, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { Product } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../config/constants';
-import { generateCoveredPincodes } from '../../utils/pincodeUtils';
+import { generateCoveredPincodes, isPincodeValid } from '../../utils/pincodeUtils';
 import { Plus, CreditCard as Edit, Trash2, Package } from 'lucide-react';
 
 const SellerProducts: React.FC = () => {
@@ -60,24 +60,40 @@ const SellerProducts: React.FC = () => {
     e.preventDefault();
     if (!user) return;
 
-    // Validate seller has pincode set
-    if (!user.pincode) {
-      alert('Please set your pincode in the profile section before adding products');
-      return;
-    }
+    console.log('Creating product with user data:', user);
 
-    setLoading(true);
-
+    // Fetch fresh user data to ensure we have latest profile
     try {
-      // Generate covered pincodes based on seller's location and delivery radius
-      const coveredPincodes = generateCoveredPincodes(user.pincode, user.deliveryRadius || 20);
-      
-      if (coveredPincodes.length === 0) {
-        alert('No serviceable pincodes found. Please check your pincode and delivery radius.');
-        setLoading(false);
+      const userDoc = await getDoc(doc(db, 'users', user.id));
+      if (!userDoc.exists()) {
+        alert('User profile not found. Please refresh and try again.');
         return;
       }
-      
+
+      const userData = userDoc.data();
+      console.log('Fresh user data:', userData);
+
+      // Validate seller has pincode set
+      if (!userData.pincode) {
+        alert('Please set your pincode in the profile section before adding products');
+        return;
+      }
+
+      // Validate pincode is valid
+      if (!isPincodeValid(userData.pincode)) {
+        alert('Your pincode is invalid. Please update your profile with a valid Gujarat pincode.');
+        return;
+      }
+
+      // Check if user has covered pincodes
+      if (!userData.coveredPincodes || userData.coveredPincodes.length === 0) {
+        alert('No delivery areas found. Please update your profile to generate delivery coverage.');
+        return;
+      }
+
+      setLoading(true);
+
+      // Use fresh user data for product creation
       const productData = {
         name: formData.name,
         description: formData.description,
@@ -87,33 +103,70 @@ const SellerProducts: React.FC = () => {
         stock: parseInt(formData.stock),
         images: formData.images.filter(img => img.trim() !== ''),
         sellerId: user.id,
-        sellerName: user.name,
-        sellerPincode: user.pincode, // Store seller's pincode for reference
-        coveredPincodes,
+        sellerName: userData.name || user.name,
+        sellerPincode: userData.pincode,
+        sellerAddress: userData.address || '',
+        sellerShopName: userData.shopName || userData.name || user.name,
+        sellerDeliveryRadius: userData.deliveryRadius || 20,
+        coveredPincodes: userData.coveredPincodes,
         isActive: true,
+        createdAt: new Date(),
         updatedAt: new Date()
       };
 
+      console.log('Creating product with data:', productData);
+
       if (editingProduct) {
-        await updateDoc(doc(db, 'products', editingProduct.id), productData);
-      } else {
-        await addDoc(collection(db, 'products'), {
+        await updateDoc(doc(db, 'products', editingProduct.id), {
           ...productData,
-          sellerShopName: user.shopName || user.name,
-          sellerAddress: user.address || '',
-          sellerDeliveryRadius: user.deliveryRadius || 20,
-          createdAt: new Date()
+          updatedAt: new Date()
         });
+        console.log('Product updated successfully');
+      } else {
+        const docRef = await addDoc(collection(db, 'products'), productData);
+        console.log('Product created with ID:', docRef.id);
       }
 
       await fetchProducts();
       setShowModal(false);
       resetForm();
+      
+      alert(`Product ${editingProduct ? 'updated' : 'created'} successfully! It can be delivered to ${userData.coveredPincodes.length} areas in Gujarat.`);
+
     } catch (error: any) {
       console.error('Error saving product:', error);
-      alert(error.message);
+      alert(`Error: ${error.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Add this helper function to get fresh user data
+  const getFreshUserData = async () => {
+    if (!user) return null;
+    
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.id));
+      if (userDoc.exists()) {
+        return userDoc.data();
+      }
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    }
+    return null;
+  };
+
+  const openModal = async (product?: Product) => {
+    // Check user profile before opening modal
+    const freshUserData = await getFreshUserData();
+    
+    if (!freshUserData?.pincode) {
+      alert('Please complete your profile by setting your pincode before adding products.');
+      return;
+    }
+    if (!freshUserData.coveredPincodes || freshUserData.coveredPincodes.length === 0) {
+      alert('No delivery areas found. Please update your profile to generate delivery coverage.');
+      return;
     }
   };
 
@@ -139,9 +192,7 @@ const SellerProducts: React.FC = () => {
       images: ['']
     });
     setEditingProduct(null);
-  };
-
-  const openModal = (product?: Product) => {
+    
     if (product) {
       setEditingProduct(product);
       setFormData({
@@ -156,6 +207,7 @@ const SellerProducts: React.FC = () => {
     } else {
       resetForm();
     }
+    
     setShowModal(true);
   };
 

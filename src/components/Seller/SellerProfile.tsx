@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { generateCoveredPincodes, isPincodeValid } from '../../utils/pincodeUtils';
@@ -8,6 +8,9 @@ import { MapPin, Save } from 'lucide-react';
 const SellerProfile: React.FC = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState<'success' | 'error' | ''>('');
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -20,6 +23,7 @@ const SellerProfile: React.FC = () => {
 
   useEffect(() => {
     if (user) {
+      console.log('Loading user data:', user);
       setFormData({
         name: user.name || '',
         phone: user.phone || '',
@@ -36,20 +40,33 @@ const SellerProfile: React.FC = () => {
     }
   }, [user]);
 
+  const showMessage = (msg: string, type: 'success' | 'error') => {
+    setMessage(msg);
+    setMessageType(type);
+    setTimeout(() => {
+      setMessage('');
+      setMessageType('');
+    }, 5000);
+  };
   const handlePincodeChange = (pincode: string) => {
+    console.log('Pincode changed to:', pincode);
     setFormData({ ...formData, pincode });
     if (isPincodeValid(pincode)) {
       const covered = generateCoveredPincodes(pincode, formData.deliveryRadius);
+      console.log('Generated covered pincodes:', covered.length);
       setCoveredPincodes(covered);
     } else {
+      console.log('Invalid pincode');
       setCoveredPincodes([]);
     }
   };
 
   const handleRadiusChange = (radius: number) => {
+    console.log('Radius changed to:', radius);
     setFormData({ ...formData, deliveryRadius: radius });
     if (formData.pincode && isPincodeValid(formData.pincode)) {
       const covered = generateCoveredPincodes(formData.pincode, radius);
+      console.log('Updated covered pincodes for radius:', covered.length);
       setCoveredPincodes(covered);
     }
   };
@@ -58,24 +75,28 @@ const SellerProfile: React.FC = () => {
     e.preventDefault();
     if (!user) return;
 
+    console.log('Submitting profile update:', formData);
+
     if (!isPincodeValid(formData.pincode)) {
-      alert('Please enter a valid PIN code');
+      showMessage('Please enter a valid PIN code from Gujarat', 'error');
       return;
     }
 
-    setLoading(true);
+    setSaving(true);
+    setMessage('');
 
     try {
       // Generate covered pincodes for the seller
       const newCoveredPincodes = generateCoveredPincodes(formData.pincode, formData.deliveryRadius);
+      console.log('Final covered pincodes:', newCoveredPincodes);
       
       if (newCoveredPincodes.length === 0) {
-        alert('No serviceable areas found for your pincode. Please check your location.');
-        setLoading(false);
+        showMessage('No serviceable areas found for your pincode. Please enter a valid Gujarat pincode.', 'error');
+        setSaving(false);
         return;
       }
 
-      await updateDoc(doc(db, 'users', user.id), {
+      const updateData = {
         name: formData.name,
         phone: formData.phone,
         address: formData.address,
@@ -84,17 +105,30 @@ const SellerProfile: React.FC = () => {
         deliveryRadius: formData.deliveryRadius,
         coveredPincodes: newCoveredPincodes,
         updatedAt: new Date()
-      });
+      };
 
-      // Update covered pincodes state
-      setCoveredPincodes(newCoveredPincodes);
-      
-      alert('Profile updated successfully!');
+      console.log('Updating user document with:', updateData);
+      await updateDoc(doc(db, 'users', user.id), updateData);
+
+      // Verify the update by fetching the document
+      const updatedDoc = await getDoc(doc(db, 'users', user.id));
+      if (updatedDoc.exists()) {
+        const updatedData = updatedDoc.data();
+        console.log('Profile updated successfully:', updatedData);
+        
+        // Update covered pincodes state
+        setCoveredPincodes(newCoveredPincodes);
+        
+        showMessage(`Profile updated successfully! You can now deliver to ${newCoveredPincodes.length} areas in Gujarat.`, 'success');
+      } else {
+        throw new Error('Failed to verify profile update');
+      }
+
     } catch (error: any) {
       console.error('Error updating profile:', error);
-      alert(error.message);
+      showMessage(`Error updating profile: ${error.message}`, 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -102,6 +136,16 @@ const SellerProfile: React.FC = () => {
     <div className="max-w-2xl">
       <h2 className="text-2xl font-bold text-white mb-6">Seller Profile</h2>
 
+      {/* Message Display */}
+      {message && (
+        <div className={`mb-6 p-4 rounded-lg ${
+          messageType === 'success' 
+            ? 'bg-green-900 border border-green-700 text-green-300' 
+            : 'bg-red-900 border border-red-700 text-red-300'
+        }`}>
+          {message}
+        </div>
+      )}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -161,7 +205,7 @@ const SellerProfile: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                PIN Code
+                PIN Code (Gujarat Only)
               </label>
               <input
                 type="text"
@@ -169,8 +213,12 @@ const SellerProfile: React.FC = () => {
                 onChange={(e) => handlePincodeChange(e.target.value)}
                 required
                 maxLength={6}
+                placeholder="e.g., 380001 (Ahmedabad)"
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
               />
+              <p className="text-xs text-gray-400 mt-1">
+                Enter a valid Gujarat PIN code to calculate delivery areas
+              </p>
             </div>
 
             <div>
@@ -216,13 +264,20 @@ const SellerProfile: React.FC = () => {
             </div>
           )}
 
+          {formData.pincode && !isPincodeValid(formData.pincode) && (
+            <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 p-3 rounded-lg">
+              <p className="text-sm">
+                ⚠️ Invalid PIN code. Please enter a valid Gujarat PIN code to enable product creation.
+              </p>
+            </div>
+          )}
           <button
             type="submit"
-            disabled={loading}
+            disabled={saving || !formData.pincode || !isPincodeValid(formData.pincode)}
             className="w-full flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Save className="w-5 h-5" />
-            <span>{loading ? 'Saving...' : 'Save Profile'}</span>
+            <span>{saving ? 'Saving...' : 'Save Profile'}</span>
           </button>
         </form>
       </div>

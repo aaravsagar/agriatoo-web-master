@@ -46,6 +46,11 @@ export const useAuth = () => {
             role: data.role || USER_ROLES.FARMER, // fallback role
             name: data.name || 'User',
             phone: data.phone || '',
+            address: data.address || '',
+            pincode: data.pincode || '',
+            shopName: data.shopName || '',
+            deliveryRadius: data.deliveryRadius || 20,
+            coveredPincodes: data.coveredPincodes || [],
             createdAt: data.createdAt?.toDate?.() || new Date(),
             isActive: data.isActive ?? true,
           });
