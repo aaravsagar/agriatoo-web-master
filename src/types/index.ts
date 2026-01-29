@@ -17,6 +17,10 @@ export interface Product {
   id: string;
   sellerId: string;
   sellerName: string;
+  sellerPincode?: string;
+  sellerAddress?: string;
+  sellerShopName?: string;
+  sellerDeliveryRadius?: number;
   name: string;
   description: string;
   category: string;
@@ -48,6 +52,7 @@ export interface Order {
   sellerName: string;
   sellerShopName: string;
   sellerAddress: string;
+  sellerPincode?: string;
   deliveryBoyId?: string;
   deliveryBoyName?: string;
   items: OrderItem[];
@@ -55,6 +60,7 @@ export interface Order {
   status: 'received' | 'packed' | 'out_for_delivery' | 'delivered' | 'not_delivered';
   paymentMethod: 'cod';
   deliveryReason?: string; // For not_delivered orders
+  qrCode?: string; // QR code for the order
   createdAt: Date;
   updatedAt: Date;
   packedAt?: Date;

@@ -44,11 +44,24 @@ const DeliveryScanner: React.FC = () => {
         updatedAt: orderDoc.data().updatedAt?.toDate() || new Date()
       } as Order;
 
-      // Verify this order is assigned to current delivery boy
-      if (order.deliveryBoyId !== user?.id) {
-        alert('This order is not assigned to you');
-        setLoading(false);
-        return;
+      // Allow delivery boy to pick up any packed order or deliver assigned orders
+      if (scanMode === 'pickup') {
+        if (order.status !== ORDER_STATUSES.PACKED) {
+          alert('This order is not ready for pickup. Status: ' + order.status.replace('_', ' '));
+          setLoading(false);
+          return;
+        }
+      } else if (scanMode === 'delivery') {
+        if (order.status !== ORDER_STATUSES.OUT_FOR_DELIVERY) {
+          alert('This order is not out for delivery. Status: ' + order.status.replace('_', ' '));
+          setLoading(false);
+          return;
+        }
+        if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
+          alert('This order is assigned to another delivery boy');
+          setLoading(false);
+          return;
+        }
       }
 
       setCurrentOrder(order);
@@ -72,6 +85,8 @@ const DeliveryScanner: React.FC = () => {
       };
 
       if (newStatus === ORDER_STATUSES.OUT_FOR_DELIVERY) {
+        updateData.deliveryBoyId = user?.id; // Assign delivery boy when picking up
+        updateData.deliveryBoyName = user?.name;
         updateData.outForDeliveryAt = new Date();
       } else if (newStatus === ORDER_STATUSES.DELIVERED) {
         updateData.deliveredAt = new Date();

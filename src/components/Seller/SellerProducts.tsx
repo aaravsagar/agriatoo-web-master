@@ -60,10 +60,23 @@ const SellerProducts: React.FC = () => {
     e.preventDefault();
     if (!user) return;
 
+    // Validate seller has pincode set
+    if (!user.pincode) {
+      alert('Please set your pincode in the profile section before adding products');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const coveredPincodes = generateCoveredPincodes(user.pincode || '', user.deliveryRadius || 20);
+      // Generate covered pincodes based on seller's location and delivery radius
+      const coveredPincodes = generateCoveredPincodes(user.pincode, user.deliveryRadius || 20);
+      
+      if (coveredPincodes.length === 0) {
+        alert('No serviceable pincodes found. Please check your pincode and delivery radius.');
+        setLoading(false);
+        return;
+      }
       
       const productData = {
         name: formData.name,
@@ -75,6 +88,7 @@ const SellerProducts: React.FC = () => {
         images: formData.images.filter(img => img.trim() !== ''),
         sellerId: user.id,
         sellerName: user.name,
+        sellerPincode: user.pincode, // Store seller's pincode for reference
         coveredPincodes,
         isActive: true,
         updatedAt: new Date()
@@ -85,6 +99,9 @@ const SellerProducts: React.FC = () => {
       } else {
         await addDoc(collection(db, 'products'), {
           ...productData,
+          sellerShopName: user.shopName || user.name,
+          sellerAddress: user.address || '',
+          sellerDeliveryRadius: user.deliveryRadius || 20,
           createdAt: new Date()
         });
       }

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useCart } from '../../hooks/useCart';
-import { generateUniqueOrderId } from '../../utils/qrUtils';
+import { generateUniqueOrderId, generateOrderQR } from '../../utils/qrUtils';
 import { isPincodeValid } from '../../utils/pincodeUtils';
 import { Plus, Minus, Trash2, ArrowLeft } from 'lucide-react';
 import { ORDER_STATUSES } from '../../config/constants';
@@ -45,13 +45,24 @@ const Cart: React.FC = () => {
     if (!customerDetails.pincode.trim()) return 'PIN code is required';
     if (!isPincodeValid(customerDetails.pincode)) return 'Invalid PIN code';
     
-    // Check if all sellers cover the pincode (since orders are grouped by seller)
+    // Validate pincode serviceability for each seller
     const sellers = [...new Set(cartItems.map(item => item.product.sellerId))];
     for (const sellerId of sellers) {
       const sellerItems = cartItems.filter(item => item.product.sellerId === sellerId);
-      const coveredPincodes = sellerItems[0]?.product?.coveredPincodes;
-      if (!coveredPincodes || !Array.isArray(coveredPincodes) || !coveredPincodes.includes(customerDetails.pincode)) {
-        return `Products from seller ${sellerItems[0]?.product?.sellerName || 'Unknown'} are not available for PIN code ${customerDetails.pincode}`;
+      const firstProduct = sellerItems[0]?.product;
+      
+      if (!firstProduct) {
+        return 'Invalid product data found in cart';
+      }
+      
+      // Check if product has covered pincodes
+      if (!firstProduct.coveredPincodes || !Array.isArray(firstProduct.coveredPincodes)) {
+        return `Products from ${firstProduct.sellerName} don't have delivery information. Please contact seller.`;
+      }
+      
+      // Check if customer pincode is covered
+      if (!firstProduct.coveredPincodes.includes(customerDetails.pincode)) {
+        return `Delivery not available to PIN code ${customerDetails.pincode} for products from ${firstProduct.sellerName}`;
       }
     }
     
@@ -82,7 +93,7 @@ const Cart: React.FC = () => {
       // Create separate orders for each seller
       const orderPromises = Object.entries(sellerGroups).map(async ([sellerId, items]) => {
         const sellerProduct = items[0].product;
-        const orderId = generateUniqueOrderId();
+        const orderId = generateUniqueOrderId(customerDetails.pincode);
         
         const orderData = {
           orderId,
@@ -93,7 +104,8 @@ const Cart: React.FC = () => {
           sellerId,
           sellerName: sellerProduct.sellerName,
           sellerShopName: sellerProduct.sellerName,
-          sellerAddress: '',
+          sellerAddress: sellerProduct.sellerAddress || '',
+          sellerPincode: sellerProduct.sellerPincode || '',
           items: items.map(item => ({
             productId: item.productId,
             productName: item.product.name,
@@ -105,7 +117,8 @@ const Cart: React.FC = () => {
           status: ORDER_STATUSES.RECEIVED,
           paymentMethod: 'cod',
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          qrCode: generateOrderQR(orderId) // Generate QR code for the order
         };
 
         return addDoc(collection(db, 'orders'), orderData);

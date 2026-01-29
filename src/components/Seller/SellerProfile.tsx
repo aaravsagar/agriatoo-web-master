@@ -66,6 +66,15 @@ const SellerProfile: React.FC = () => {
     setLoading(true);
 
     try {
+      // Generate covered pincodes for the seller
+      const newCoveredPincodes = generateCoveredPincodes(formData.pincode, formData.deliveryRadius);
+      
+      if (newCoveredPincodes.length === 0) {
+        alert('No serviceable areas found for your pincode. Please check your location.');
+        setLoading(false);
+        return;
+      }
+
       await updateDoc(doc(db, 'users', user.id), {
         name: formData.name,
         phone: formData.phone,
@@ -73,10 +82,13 @@ const SellerProfile: React.FC = () => {
         pincode: formData.pincode,
         shopName: formData.shopName,
         deliveryRadius: formData.deliveryRadius,
-        coveredPincodes,
+        coveredPincodes: newCoveredPincodes,
         updatedAt: new Date()
       });
 
+      // Update covered pincodes state
+      setCoveredPincodes(newCoveredPincodes);
+      
       alert('Profile updated successfully!');
     } catch (error: any) {
       console.error('Error updating profile:', error);

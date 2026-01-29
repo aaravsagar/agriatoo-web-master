@@ -3,6 +3,7 @@ import { collection, getDocs, query, addDoc, doc, getDoc } from 'firebase/firest
 import { db } from '../../config/firebase';
 import { Product } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../config/constants';
+import { generateCoveredPincodes } from '../../utils/pincodeUtils';
 import { Package, Eye, Plus } from 'lucide-react'; // Added Plus for add button
 
 const AdminProducts: React.FC = () => {
@@ -58,19 +59,27 @@ const AdminProducts: React.FC = () => {
     try {
       // Fetch seller's pin code if sellerId is provided
       let sellerPincode = '';
+      let sellerDeliveryRadius = 20;
       if (formData.sellerId) {
         const sellerDoc = await getDoc(doc(db, 'users', formData.sellerId));
         if (sellerDoc.exists()) {
           const sellerData = sellerDoc.data();
-          // Assuming role is 'seller' or similar; adjust if needed
           if (sellerData.role === 'seller') {
             sellerPincode = sellerData.pincode || '';
+            sellerDeliveryRadius = sellerData.deliveryRadius || 20;
           }
         }
       }
 
-      // Set coveredPincodes to include the seller's pin code
-      const coveredPincodes = sellerPincode ? [sellerPincode] : [];
+      // Generate covered pincodes based on seller's location and delivery radius
+      const coveredPincodes = sellerPincode ? 
+        generateCoveredPincodes(sellerPincode, sellerDeliveryRadius) : [];
+      
+      if (sellerPincode && coveredPincodes.length === 0) {
+        alert('No serviceable pincodes found for the seller. Please check seller\'s pincode.');
+        setLoading(false);
+        return;
+      }
 
       // Add product to Firestore
       await addDoc(collection(db, 'products'), {
@@ -83,8 +92,10 @@ const AdminProducts: React.FC = () => {
         images: formData.images,
         sellerId: formData.sellerId,
         sellerName: formData.sellerName,
+        sellerPincode: sellerPincode,
+        sellerDeliveryRadius: sellerDeliveryRadius,
         isActive: formData.isActive,
-        coveredPincodes: coveredPincodes, // Include the seller's pin code in coveredPincodes
+        coveredPincodes: coveredPincodes,
         createdAt: new Date()
       });
 

@@ -21,14 +21,10 @@ const DeliveryOrders: React.FC = () => {
   }, [user]);
 
   const fetchOrders = async () => {
-    if (!user) return;
-
     try {
-      // Simplified query without orderBy
-      const q = query(
-        collection(db, 'orders'),
-        where('deliveryBoyId', '==', user.id)
-      );
+      // Fetch ALL orders for delivery boy to see (not just assigned ones)
+      // This allows delivery boys to pick up orders from any seller
+      const q = query(collection(db, 'orders'));
       const snapshot = await getDocs(q);
       let ordersData = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -39,6 +35,15 @@ const DeliveryOrders: React.FC = () => {
 
       // Frontend sorting by creation date (newest first)
       ordersData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      // Filter orders that are ready for pickup or delivery
+      ordersData = ordersData.filter(order => 
+        order.status === ORDER_STATUSES.PACKED || 
+        order.status === ORDER_STATUSES.OUT_FOR_DELIVERY ||
+        order.status === ORDER_STATUSES.DELIVERED ||
+        order.status === ORDER_STATUSES.NOT_DELIVERED ||
+        (order.deliveryBoyId && order.deliveryBoyId === user?.id)
+      );
 
       // Sort orders by distance if user has pincode
       const sortedOrders = user.pincode 

@@ -85,6 +85,13 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
           </div>
         </div>
         
+        {/* Show delivery coverage info */}
+        <div className="mb-3">
+          <div className="text-xs text-gray-500">
+            Delivers to: {product.coveredPincodes?.length || 0} areas in Gujarat
+          </div>
+        </div>
+        
         <div className="flex items-center justify-between">
           <div className="text-2xl font-bold text-green-600">
             ₹{productPrice}
@@ -93,11 +100,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
           
           <button
             onClick={handleAddToCart}
-            disabled={productStock <= 0 || isAdding}
+            disabled={productStock <= 0 || isAdding || !product.coveredPincodes?.length}
             className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all disabled:cursor-not-allowed ${
               isAdding
                 ? 'bg-green-700 text-white'
-                : productStock > 0
+                : productStock > 0 && product.coveredPincodes?.length
                 ? 'bg-green-600 hover:bg-green-700 text-white'
                 : 'bg-gray-400 text-white'
             }`}
@@ -110,7 +117,14 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
             ) : (
               <>
                 <ShoppingCart className="w-4 h-4" />
-                <span>{productStock > 0 ? 'Add to Cart' : 'Out of Stock'}</span>
+                <span>
+                  {!product.coveredPincodes?.length 
+                    ? 'No Delivery' 
+                    : productStock > 0 
+                    ? 'Add to Cart' 
+                    : 'Out of Stock'
+                  }
+                </span>
               </>
             )}
           </button>

@@ -87,6 +87,17 @@ const HomePage: React.FC = () => {
   const handleAddToCart = (product: Product) => {
     if (!product || !product.id) {
       console.error('Invalid product:', product);
+      setNotificationMessage('Invalid product data');
+      setShowNotification(true);
+      setTimeout(() => setShowNotification(false), 3000);
+      return;
+    }
+
+    // Validate product has delivery coverage
+    if (!product.coveredPincodes || product.coveredPincodes.length === 0) {
+      setNotificationMessage('This product has no delivery coverage set');
+      setShowNotification(true);
+      setTimeout(() => setShowNotification(false), 3000);
       return;
     }
 
