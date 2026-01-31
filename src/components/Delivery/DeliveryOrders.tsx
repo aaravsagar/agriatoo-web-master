@@ -11,20 +11,25 @@ import { MapPin, Package, Navigation } from 'lucide-react';
 const DeliveryOrders: React.FC = () => {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [scannedOrders, setScannedOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState('');
 
   useEffect(() => {
     if (user) {
-      fetchOrders();
+      fetchScannedOrders();
     }
   }, [user]);
 
-  const fetchOrders = async () => {
+  const fetchScannedOrders = async () => {
+    if (!user) return;
+    
     try {
-      // Fetch ALL orders for delivery boy to see (not just assigned ones)
-      // This allows delivery boys to pick up orders from any seller
-      const q = query(collection(db, 'orders'));
+      // Only show orders that are assigned to this delivery boy
+      const q = query(
+        collection(db, 'orders'),
+        where('deliveryBoyId', '==', user.id)
+      );
       const snapshot = await getDocs(q);
       let ordersData = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -36,31 +41,17 @@ const DeliveryOrders: React.FC = () => {
       // Frontend sorting by creation date (newest first)
       ordersData.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-      // Filter orders that are ready for pickup or delivery
-      ordersData = ordersData.filter(order => 
-        order.status === ORDER_STATUSES.PACKED || 
-        order.status === ORDER_STATUSES.OUT_FOR_DELIVERY ||
-        order.status === ORDER_STATUSES.DELIVERED ||
-        order.status === ORDER_STATUSES.NOT_DELIVERED ||
-        (order.deliveryBoyId && order.deliveryBoyId === user?.id)
-      );
-
-      // Sort orders by distance if user has pincode
-      const sortedOrders = user.pincode 
-        ? sortOrdersByDistance([...ordersData], user.pincode)
-        : ordersData;
-
-      setOrders(sortedOrders);
+      setScannedOrders(ordersData);
     } catch (error) {
-      console.error('Error fetching delivery orders:', error);
+      console.error('Error fetching scanned orders:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const filteredOrders = selectedStatus
-    ? orders.filter(order => order.status === selectedStatus)
-    : orders;
+    ? scannedOrders.filter(order => order.status === selectedStatus)
+    : scannedOrders;
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -86,7 +77,7 @@ const DeliveryOrders: React.FC = () => {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-white">My Delivery Orders</h2>
+        <h2 className="text-2xl font-bold text-white">My Assigned Orders</h2>
         <select
           value={selectedStatus}
           onChange={(e) => setSelectedStatus(e.target.value)}
@@ -98,6 +89,13 @@ const DeliveryOrders: React.FC = () => {
           <option value={ORDER_STATUSES.DELIVERED}>Delivered</option>
           <option value={ORDER_STATUSES.NOT_DELIVERED}>Not Delivered</option>
         </select>
+      </div>
+
+      <div className="bg-blue-900 border border-blue-700 text-blue-300 p-4 rounded-lg mb-6">
+        <p className="text-sm">
+          📦 <strong>Note:</strong> Orders appear here only after you scan them for pickup. 
+          Use the Scanner tab to scan package QR codes and start deliveries.
+        </p>
       </div>
 
       {loading ? (
@@ -191,11 +189,11 @@ const DeliveryOrders: React.FC = () => {
       {filteredOrders.length === 0 && !loading && (
         <div className="text-center py-12">
           <Package className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-white mb-2">No orders found</h3>
+          <h3 className="text-lg font-medium text-white mb-2">No scanned orders</h3>
           <p className="text-gray-400">
             {selectedStatus 
-              ? `No orders with "${selectedStatus}" status`
-              : 'No orders assigned to you yet'
+              ? `No scanned orders with "${selectedStatus}" status`
+              : 'Scan package QR codes to see orders here'
             }
           </p>
         </div>

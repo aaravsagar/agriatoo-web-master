@@ -17,7 +17,8 @@ const SellerProfile: React.FC = () => {
     address: '',
     pincode: '',
     shopName: '',
-    deliveryRadius: 20
+    deliveryRadius: 20,
+    upiId: ''
   });
   const [coveredPincodes, setCoveredPincodes] = useState<string[]>([]);
 
@@ -30,7 +31,8 @@ const SellerProfile: React.FC = () => {
         address: user.address || '',
         pincode: user.pincode || '',
         shopName: user.shopName || '',
-        deliveryRadius: user.deliveryRadius || 20
+        deliveryRadius: user.deliveryRadius || 20,
+        upiId: user.upiId || ''
       });
       
       if (user.pincode) {
@@ -103,6 +105,7 @@ const SellerProfile: React.FC = () => {
         pincode: formData.pincode,
         shopName: formData.shopName,
         deliveryRadius: formData.deliveryRadius,
+        upiId: formData.upiId,
         coveredPincodes: newCoveredPincodes,
         updatedAt: new Date()
       };
@@ -263,6 +266,22 @@ const SellerProfile: React.FC = () => {
               </div>
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              UPI ID (for digital payments)
+            </label>
+            <input
+              type="text"
+              value={formData.upiId}
+              onChange={(e) => setFormData({ ...formData, upiId: e.target.value })}
+              placeholder="yourname@paytm / yourname@phonepe"
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Optional: Add your UPI ID to receive digital payments from customers
+            </p>
+          </div>
 
           {formData.pincode && !isPincodeValid(formData.pincode) && (
             <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 p-3 rounded-lg">

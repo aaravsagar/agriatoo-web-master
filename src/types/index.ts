@@ -9,6 +9,7 @@ export interface User {
   shopName?: string;
   deliveryRadius?: number;
   coveredPincodes?: string[];
+  upiId?: string;
   createdAt: Date;
   isActive: boolean;
 }
@@ -55,10 +56,14 @@ export interface Order {
   sellerPincode?: string;
   deliveryBoyId?: string;
   deliveryBoyName?: string;
+  assignedDeliveryBoys?: string[]; // Array of delivery boy IDs
   items: OrderItem[];
   totalAmount: number;
   status: 'received' | 'packed' | 'out_for_delivery' | 'delivered' | 'not_delivered';
   paymentMethod: 'cod';
+  deliveryPaymentMethod?: 'cash' | 'upi';
+  cashCollected?: number;
+  upiTransactionId?: string;
   deliveryReason?: string; // For not_delivered orders
   qrCode?: string; // QR code for the order
   createdAt: Date;
@@ -81,4 +86,21 @@ export interface DeliveryAssignment {
   orderIds: string[];
   assignedAt: Date;
   completedAt?: Date;
+}
+
+export interface DeliveryRecord {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  sellerId: string;
+  sellerName: string;
+  deliveryBoyId: string;
+  deliveryBoyName: string;
+  paymentMethod: 'cash' | 'upi';
+  amount: number;
+  cashCollected?: number;
+  upiTransactionId?: string;
+  timestamp: Date;
+  customerName: string;
+  customerAddress: string;
 }

@@ -1,25 +1,69 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, addDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
-import { Order } from '../../types';
+import { Order, User, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
 import { generateOrderQR } from '../../utils/qrUtils';
 import { format } from 'date-fns';
-import { Eye, Package, Printer, QrCode } from 'lucide-react';
+import { Eye, Package, Printer, QrCode, UserPlus, Users } from 'lucide-react';
 
 const SellerOrders: React.FC = () => {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [deliveryBoys, setDeliveryBoys] = useState<User[]>([]);
+  const [deliveryRecords, setDeliveryRecords] = useState<DeliveryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assigningOrderId, setAssigningOrderId] = useState<string>('');
 
   useEffect(() => {
     if (user) {
       fetchOrders();
+      fetchDeliveryBoys();
+      fetchDeliveryRecords();
     }
   }, [user]);
+
+  const fetchDeliveryBoys = async () => {
+    try {
+      const q = query(
+        collection(db, 'users'),
+        where('role', '==', 'delivery'),
+        where('isActive', '==', true)
+      );
+      const snapshot = await getDocs(q);
+      const deliveryBoysData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate() || new Date()
+      })) as User[];
+      setDeliveryBoys(deliveryBoysData);
+    } catch (error) {
+      console.error('Error fetching delivery boys:', error);
+    }
+  };
+
+  const fetchDeliveryRecords = async () => {
+    if (!user) return;
+    try {
+      const q = query(
+        collection(db, 'deliveryRecords'),
+        where('sellerId', '==', user.id)
+      );
+      const snapshot = await getDocs(q);
+      const recordsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().timestamp?.toDate() || new Date()
+      })) as DeliveryRecord[];
+      setDeliveryRecords(recordsData);
+    } catch (error) {
+      console.error('Error fetching delivery records:', error);
+    }
+  };
 
   const fetchOrders = async () => {
     if (!user) return;
@@ -69,6 +113,26 @@ const SellerOrders: React.FC = () => {
     }
   };
 
+  const assignDeliveryBoy = async (orderId: string, deliveryBoyId: string) => {
+    try {
+      const deliveryBoy = deliveryBoys.find(db => db.id === deliveryBoyId);
+      if (!deliveryBoy) return;
+
+      await updateDoc(doc(db, 'orders', orderId), {
+        assignedDeliveryBoys: [deliveryBoyId],
+        deliveryBoyId: deliveryBoyId,
+        deliveryBoyName: deliveryBoy.name,
+        updatedAt: new Date()
+      });
+
+      await fetchOrders();
+      setShowAssignModal(false);
+      setAssigningOrderId('');
+    } catch (error) {
+      console.error('Error assigning delivery boy:', error);
+    }
+  };
+
   const printReceipt = (order: Order) => {
     const qrCode = generateOrderQR(order.orderId);
     
@@ -77,71 +141,105 @@ const SellerOrders: React.FC = () => {
       printWindow.document.write(`
         <html>
           <head>
-            <title>Shipping Receipt - ${order.orderId}</title>
+            <title>Delivery Sticker - ${order.orderId}</title>
             <style>
-              body { font-family: Arial, sans-serif; padding: 20px; }
-              .header { text-align: center; margin-bottom: 20px; }
-              .section { margin-bottom: 15px; }
-              .qr-code { text-align: center; margin: 20px 0; }
-              table { width: 100%; border-collapse: collapse; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-              th { background-color: #f2f2f2; }
+              body { 
+                font-family: Arial, sans-serif; 
+                margin: 0; 
+                padding: 10px; 
+                font-size: 12px;
+                width: 4in;
+                background: white;
+              }
+              .sticker {
+                border: 2px solid #000;
+                padding: 8px;
+                background: white;
+              }
+              .header {
+                text-align: center;
+                border-bottom: 1px solid #000;
+                padding-bottom: 5px;
+                margin-bottom: 8px;
+              }
+              .brand {
+                font-weight: bold;
+                font-size: 14px;
+                color: #000;
+              }
+              .order-id {
+                font-weight: bold;
+                font-size: 11px;
+                margin: 2px 0;
+              }
+              .section {
+                margin-bottom: 8px;
+                font-size: 10px;
+              }
+              .label {
+                font-weight: bold;
+                display: inline-block;
+                width: 60px;
+              }
+              .qr-section {
+                text-align: center;
+                margin: 8px 0;
+                border: 1px solid #000;
+                padding: 5px;
+              }
+              .cod-amount {
+                font-size: 14px;
+                font-weight: bold;
+                text-align: center;
+                background: #f0f0f0;
+                padding: 5px;
+                border: 1px solid #000;
+                margin: 5px 0;
+              }
+              .barcode {
+                text-align: center;
+                font-family: 'Courier New', monospace;
+                font-size: 8px;
+                letter-spacing: 1px;
+                margin: 5px 0;
+              }
             </style>
           </head>
           <body>
-            <div class="header">
-              <h2>AGRIATOO - Shipping Receipt</h2>
-              <h3>Order ID: ${order.orderId}</h3>
-            </div>
-            
-            <div class="section">
-              <h4>Customer Details:</h4>
-              <p><strong>Name:</strong> ${order.customerName}</p>
-              <p><strong>Phone:</strong> ${order.customerPhone}</p>
-              <p><strong>Address:</strong> ${order.customerAddress}</p>
-              <p><strong>PIN Code:</strong> ${order.customerPincode}</p>
-            </div>
-            
-            <div class="section">
-              <h4>Seller Details:</h4>
-              <p><strong>Shop:</strong> ${order.sellerShopName}</p>
-              <p><strong>Seller:</strong> ${order.sellerName}</p>
-            </div>
-            
-            <div class="section">
-              <h4>Order Items:</h4>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Quantity</th>
-                    <th>Unit Price</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${order.items.map(item => `
-                    <tr>
-                      <td>${item.productName}</td>
-                      <td>${item.quantity} ${item.unit}</td>
-                      <td>₹${item.price}</td>
-                      <td>₹${(item.price * item.quantity).toFixed(2)}</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-              <p><strong>Total Amount: ₹${order.totalAmount}</strong></p>
-              <p><strong>Payment Method:</strong> Cash on Delivery</p>
-            </div>
-            
-            <div class="qr-code">
-              <img src="${qrCode}" alt="Order QR Code" />
-              <p>Scan QR code for order tracking</p>
-            </div>
-            
-            <div class="section">
-              <p><strong>Order Date:</strong> ${format(order.createdAt, 'PPP')}</p>
-              <p><strong>Status:</strong> ${order.status.replace('_', ' ').toUpperCase()}</p>
+            <div class="sticker">
+              <div class="header">
+                <div class="brand">AGRIATOO</div>
+                <div class="order-id">Order: ${order.orderId}</div>
+              </div>
+              
+              <div class="section">
+                <div><span class="label">To:</span> ${order.customerName}</div>
+                <div><span class="label">Phone:</span> ${order.customerPhone}</div>
+                <div style="margin-top: 3px;">${order.customerAddress}</div>
+                <div><span class="label">PIN:</span> ${order.customerPincode}</div>
+              </div>
+              
+              <div class="section">
+                <div><span class="label">From:</span> ${order.sellerShopName}</div>
+                <div><span class="label">Seller:</span> ${order.sellerName}</div>
+              </div>
+              
+              <div class="cod-amount">
+                COD: ₹${order.totalAmount}
+              </div>
+              
+              <div class="qr-section">
+                <img src="${qrCode}" alt="QR" style="width: 60px; height: 60px;" />
+                <div style="font-size: 8px; margin-top: 2px;">Scan to Track</div>
+              </div>
+              
+              <div class="barcode">
+                ||||| ${order.orderId} |||||
+              </div>
+              
+              <div style="text-align: center; font-size: 8px; margin-top: 5px;">
+                ${format(order.createdAt, 'dd/MM/yyyy HH:mm')} | ${order.items.length} items
+              </div>
             </div>
           </body>
         </html>
@@ -253,14 +351,26 @@ const SellerOrders: React.FC = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex space-x-2">
                         <button
+                          onClick={() => {
+                            setAssigningOrderId(order.id);
+                            setShowAssignModal(true);
+                          }}
+                          className="text-blue-400 hover:text-blue-300"
+                          title="Assign Delivery Boy"
+                        >
+                          <UserPlus className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => setSelectedOrder(order)}
                           className="text-blue-400 hover:text-blue-300"
+                          title="View Details"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => printReceipt(order)}
                           className="text-green-400 hover:text-green-300"
+                          title="Print Sticker"
                         >
                           <Printer className="w-4 h-4" />
                         </button>
@@ -268,6 +378,7 @@ const SellerOrders: React.FC = () => {
                           <button
                             onClick={() => updateOrderStatus(order.id, ORDER_STATUSES.PACKED)}
                             className="text-yellow-400 hover:text-yellow-300"
+                            title="Mark as Packed"
                           >
                             <Package className="w-4 h-4" />
                           </button>
@@ -282,6 +393,19 @@ const SellerOrders: React.FC = () => {
         </div>
       )}
 
+      {/* Delivery Records Section */}
+      <div className="mt-8 bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h3 className="text-lg font-medium mb-4 text-white flex items-center">
+          <Users className="w-5 h-5 mr-2" />
+          Delivery Records ({deliveryRecords.length})
+        </h3>
+        {deliveryRecords.length === 0 ? (
+          <p className="text-gray-400">No delivery records yet</p>
+        ) : (
+          <div className="text-gray-300 text-sm">Recent deliveries will appear here</div>
+        )}
+      </div>
+
       {filteredOrders.length === 0 && !loading && (
         <div className="text-center py-12">
           <Package className="w-16 h-16 text-gray-600 mx-auto mb-4" />
@@ -292,6 +416,36 @@ const SellerOrders: React.FC = () => {
               : 'No orders available'
             }
           </p>
+        </div>
+      )}
+
+      {/* Assign Delivery Boy Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+            <h3 className="text-lg font-medium mb-4 text-white">Assign Delivery Boy</h3>
+            
+            <div className="space-y-3 mb-6">
+              {deliveryBoys.map(deliveryBoy => (
+                <button
+                  key={deliveryBoy.id}
+                  onClick={() => assignDeliveryBoy(assigningOrderId, deliveryBoy.id)}
+                  className="w-full text-left p-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                >
+                  <div className="text-white font-medium">{deliveryBoy.name}</div>
+                  <div className="text-gray-400 text-sm">{deliveryBoy.phone}</div>
+                  <div className="text-gray-400 text-sm">Area: {deliveryBoy.pincode}</div>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowAssignModal(false)}
+              className="w-full px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
