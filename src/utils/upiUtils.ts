@@ -9,28 +9,13 @@ export interface UPIPaymentData {
 
 export const generateUPIQRCode = (data: UPIPaymentData): string => {
   const { upiId, amount, transactionNote, merchantName } = data;
-  
+
   // UPI URL format: upi://pay?pa=UPI_ID&pn=NAME&am=AMOUNT&tn=NOTE&cu=INR
   const upiUrl = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(merchantName)}&am=${amount}&tn=${encodeURIComponent(transactionNote)}&cu=INR`;
-  
-  // For demo purposes, we'll create a data URL with the UPI string
-  // In production, you'd use a proper QR code library
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  canvas.width = 200;
-  canvas.height = 200;
-  
-  if (ctx) {
-    // Simple QR-like pattern for demo
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, 200, 200);
-    ctx.fillStyle = '#fff';
-    ctx.font = '10px Arial';
-    ctx.fillText('UPI QR', 80, 100);
-    ctx.fillText(`₹${amount}`, 80, 120);
-  }
-  
-  return canvas.toDataURL();
+
+  // Return the UPI URL string. QR generation (SVG/img) should be done by a QR library
+  // or a React component so it renders properly in the UI.
+  return upiUrl;
 };
 
 export const validateUPIId = (upiId: string): boolean => {

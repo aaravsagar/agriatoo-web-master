@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc, addDoc } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
+import { collection, query, where, getDocs, updateDoc, doc, addDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { Order, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
 import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
-import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign } from 'lucide-react';
+import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign, AlertCircle } from 'lucide-react';
 
 const DeliveryScanner: React.FC = () => {
   const { user } = useAuth();
@@ -20,6 +20,8 @@ const DeliveryScanner: React.FC = () => {
   const [cashAmount, setCashAmount] = useState('');
   const [upiQRCode, setUpiQRCode] = useState('');
   const [transactionId, setTransactionId] = useState('');
+  const [showAssignmentWarning, setShowAssignmentWarning] = useState(false);
+  const [sellerUpiId, setSellerUpiId] = useState('');
 
   const handleScan = async () => {
     if (!scannedOrderId.trim()) {
@@ -28,6 +30,7 @@ const DeliveryScanner: React.FC = () => {
     }
 
     setLoading(true);
+    setShowAssignmentWarning(false);
 
     try {
       const q = query(
@@ -50,38 +53,71 @@ const DeliveryScanner: React.FC = () => {
         updatedAt: orderDoc.data().updatedAt?.toDate() || new Date()
       } as Order;
 
-      // Allow delivery boy to pick up any packed order or deliver assigned orders
+      // Fetch seller's UPI ID
+      await fetchSellerUpiId(order.sellerId);
+
+      // Allow delivery boy to pick up ANY packed order or deliver their assigned orders
       if (scanMode === 'pickup') {
         if (order.status !== ORDER_STATUSES.PACKED) {
           alert('This order is not ready for pickup. Status: ' + order.status.replace('_', ' '));
           setLoading(false);
           return;
         }
-        // Check if order is assigned to this delivery boy
-        if (order.assignedDeliveryBoys && !order.assignedDeliveryBoys.includes(user?.id || '')) {
-          alert('This order is not assigned to you. Please contact the seller.');
-          setLoading(false);
-          return;
+        
+        // Show warning if order was assigned to someone else, but allow pickup anyway
+        if (order.assignedDeliveryBoys && 
+            order.assignedDeliveryBoys.length > 0 && 
+            !order.assignedDeliveryBoys.includes(user?.id || '')) {
+          setShowAssignmentWarning(true);
         }
+        
+        // Set the order regardless of assignment
+        setCurrentOrder(order);
+        
       } else if (scanMode === 'delivery') {
         if (order.status !== ORDER_STATUSES.OUT_FOR_DELIVERY) {
           alert('This order is not out for delivery. Status: ' + order.status.replace('_', ' '));
           setLoading(false);
           return;
         }
+        
+        // Only allow delivery if this delivery boy picked it up
         if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
-          alert('This order is assigned to another delivery boy');
+          alert('This order is assigned to another delivery boy. Only the delivery boy who picked it up can mark it as delivered.');
           setLoading(false);
           return;
         }
+        
+        setCurrentOrder(order);
       }
 
-      setCurrentOrder(order);
     } catch (error) {
       console.error('Error scanning order:', error);
       alert('Error scanning order');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSellerUpiId = async (sellerId: string) => {
+    try {
+      const sellerDoc = await getDoc(doc(db, 'users', sellerId));
+      if (sellerDoc.exists()) {
+        const sellerData = sellerDoc.data();
+        const upiId = sellerData.upiId || '';
+        console.log('Fetched seller UPI ID:', upiId);
+        setSellerUpiId(upiId);
+        
+        if (!upiId) {
+          console.warn('Seller does not have UPI ID configured');
+        }
+      } else {
+        console.error('Seller document not found');
+        setSellerUpiId('');
+      }
+    } catch (error) {
+      console.error('Error fetching seller UPI ID:', error);
+      setSellerUpiId('');
     }
   };
 
@@ -100,6 +136,10 @@ const DeliveryScanner: React.FC = () => {
         updateData.deliveryBoyId = user?.id;
         updateData.deliveryBoyName = user?.name;
         updateData.outForDeliveryAt = new Date();
+        
+        // Update the assignedDeliveryBoys to include this delivery boy
+        updateData.assignedDeliveryBoys = [user?.id];
+        
       } else if (newStatus === ORDER_STATUSES.DELIVERED) {
         updateData.deliveredAt = new Date();
         if (paymentData) {
@@ -143,6 +183,7 @@ const DeliveryScanner: React.FC = () => {
       setDeliveryReason('');
       setShowReasonModal(false);
       setShowPaymentModal(false);
+      setShowAssignmentWarning(false);
       resetPaymentForm();
     } catch (error) {
       console.error('Error updating order status:', error);
@@ -157,6 +198,7 @@ const DeliveryScanner: React.FC = () => {
     setCashAmount('');
     setUpiQRCode('');
     setTransactionId('');
+    setSellerUpiId('');
   };
 
   const handleDeliveryAction = (delivered: boolean) => {
@@ -190,20 +232,6 @@ const DeliveryScanner: React.FC = () => {
     }
   };
 
-  const generateUPIPayment = () => {
-    if (!currentOrder) return;
-    
-    const upiQR = generateUPIQRCode({
-      upiId: 'seller@paytm', // This should come from seller's profile
-      amount: currentOrder.totalAmount,
-      transactionNote: `Payment for order ${currentOrder.orderId}`,
-      merchantName: currentOrder.sellerName
-    });
-    
-    setUpiQRCode(upiQR);
-    setTransactionId(generateTransactionId());
-  };
-
   const handleNotDelivered = () => {
     if (!deliveryReason.trim()) {
       alert('Please provide a reason for non-delivery');
@@ -212,115 +240,204 @@ const DeliveryScanner: React.FC = () => {
     updateOrderStatus(ORDER_STATUSES.NOT_DELIVERED, deliveryReason);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case ORDER_STATUSES.PACKED:
-        return 'bg-yellow-900 text-yellow-300';
-      case ORDER_STATUSES.OUT_FOR_DELIVERY:
-        return 'bg-purple-900 text-purple-300';
-      case ORDER_STATUSES.DELIVERED:
-        return 'bg-green-900 text-green-300';
-      case ORDER_STATUSES.NOT_DELIVERED:
-        return 'bg-red-900 text-red-300';
-      default:
-        return 'bg-gray-900 text-gray-300';
+  const generateUPIPayment = () => {
+    if (!currentOrder) return;
+    
+    // Check if seller has UPI ID
+    if (!sellerUpiId) {
+      alert('Seller UPI ID not available. Please contact the seller.');
+      return;
     }
+    
+    // Generate UPI payment link in correct format
+    const upiString = `upi://pay?pa=${sellerUpiId}&pn=${currentOrder.sellerName}&am=${currentOrder.totalAmount}&cu=INR`;
+
+    // Store the UPI string; we'll generate the QR locally using the installed qrcode-generator
+    console.log('UPI String:', upiString);
+    setUpiQRCode(upiString);
   };
 
-  return (
-    <div className="max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold text-white mb-6">QR Code Scanner</h2>
+  // SVG markup for the generated UPI QR
+  const [upiQrSvg, setUpiQrSvg] = useState('');
 
-      {/* Scan Mode Toggle */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Scan Mode</h3>
-        <div className="flex space-x-4">
-          <button
-            onClick={() => setScanMode('pickup')}
-            className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-              scanMode === 'pickup'
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            Pickup Mode
-            <p className="text-sm opacity-75">Mark orders as "Out for Delivery"</p>
-          </button>
-          <button
-            onClick={() => setScanMode('delivery')}
-            className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-              scanMode === 'delivery'
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            Delivery Mode
-            <p className="text-sm opacity-75">Mark orders as "Delivered" or "Not Delivered"</p>
-          </button>
-        </div>
+  useEffect(() => {
+    let mounted = true;
+    if (!upiQRCode) {
+      setUpiQrSvg('');
+      return;
+    }
+
+    const generate = async () => {
+      try {
+        const mod = await import('qrcode-generator');
+        // module may export the factory as default or directly
+        // @ts-ignore
+        const qrcodeFactory = mod && mod.default ? mod.default : mod;
+        // create QR with automatic type (0) and error correction L
+        const qr = qrcodeFactory(0, 'L');
+        qr.addData(upiQRCode);
+        qr.make();
+        const svg = qr.createSvgTag(6);
+        if (mounted) setUpiQrSvg(svg);
+      } catch (e) {
+        console.error('Error generating QR SVG:', e);
+        if (mounted) setUpiQrSvg('');
+      }
+    };
+
+    generate();
+
+    return () => {
+      mounted = false;
+    };
+  }, [upiQRCode]);
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* Mode Selector */}
+      <div className="flex space-x-4 mb-6">
+        <button
+          onClick={() => {
+            setScanMode('pickup');
+            setCurrentOrder(null);
+            setScannedOrderId('');
+            setShowAssignmentWarning(false);
+          }}
+          className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
+            scanMode === 'pickup'
+              ? 'bg-purple-600 text-white'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+          }`}
+        >
+          📦 Pickup Mode
+        </button>
+        <button
+          onClick={() => {
+            setScanMode('delivery');
+            setCurrentOrder(null);
+            setScannedOrderId('');
+            setShowAssignmentWarning(false);
+          }}
+          className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
+            scanMode === 'delivery'
+              ? 'bg-green-600 text-white'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+          }`}
+        >
+          🚚 Delivery Mode
+        </button>
+      </div>
+
+      {/* Info Banner */}
+      <div className={`p-4 rounded-lg mb-6 ${
+        scanMode === 'pickup' 
+          ? 'bg-purple-900 border border-purple-700 text-purple-300'
+          : 'bg-green-900 border border-green-700 text-green-300'
+      }`}>
+        <p className="text-sm">
+          {scanMode === 'pickup' 
+            ? '📦 Pickup Mode: Scan any packed order to pick it up for delivery. You can pick up orders from any seller.'
+            : '🚚 Delivery Mode: Scan orders that you have picked up to mark them as delivered or not delivered.'
+          }
+        </p>
       </div>
 
       {/* Scanner Input */}
       <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-        <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
-          <QrCode className="w-5 h-5 mr-2" />
+        <h3 className="text-lg font-medium mb-4 text-white flex items-center">
+          <Scan className="w-5 h-5 mr-2" />
           Scan Order QR Code
         </h3>
         
-        <div className="flex space-x-3">
+        <div className="flex space-x-2">
           <input
             type="text"
-            placeholder="Enter Order ID or scan QR code"
             value={scannedOrderId}
             onChange={(e) => setScannedOrderId(e.target.value)}
-            className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
             onKeyPress={(e) => e.key === 'Enter' && handleScan()}
+            placeholder="Enter or scan Order ID"
+            className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
           />
           <button
             onClick={handleScan}
             disabled={loading}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center space-x-2"
           >
-            <Scan className="w-5 h-5" />
+            <QrCode className="w-5 h-5" />
             <span>{loading ? 'Scanning...' : 'Scan'}</span>
           </button>
         </div>
       </div>
 
-      {/* Scanned Order Details */}
+      {/* Assignment Warning */}
+      {showAssignmentWarning && currentOrder && (
+        <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 p-4 rounded-lg mb-6">
+          <div className="flex items-start">
+            <AlertCircle className="w-5 h-5 mr-3 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-semibold mb-1">⚠️ Assignment Notice</p>
+              <p className="text-sm">
+                This order was originally assigned to another delivery partner. However, you can still pick it up and deliver it.
+                Once you mark it as "Out for Delivery", you will become the assigned delivery partner for this order.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Details */}
       {currentOrder && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-white">Order Details</h3>
-            <span className={`px-3 py-1 text-sm font-semibold rounded-full ${getStatusColor(currentOrder.status)}`}>
-              {currentOrder.status.replace('_', ' ')}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div>
-              <h4 className="font-semibold text-white mb-2">Order Information</h4>
-              <div className="text-sm text-gray-300 space-y-1">
-                <p><strong>Order ID:</strong> {currentOrder.orderId}</p>
-                <p><strong>Customer:</strong> {currentOrder.customerName}</p>
-                <p><strong>Phone:</strong> {currentOrder.customerPhone}</p>
-                <p><strong>Amount:</strong> ₹{currentOrder.totalAmount}</p>
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 space-y-6">
+          <div className="border-b border-gray-700 pb-4">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h3 className="text-xl font-semibold text-white">{currentOrder.orderId}</h3>
+                <p className="text-sm text-gray-400 mt-1">
+                  Status: <span className={`font-medium ${
+                    currentOrder.status === ORDER_STATUSES.PACKED ? 'text-yellow-400' :
+                    currentOrder.status === ORDER_STATUSES.OUT_FOR_DELIVERY ? 'text-purple-400' :
+                    currentOrder.status === ORDER_STATUSES.DELIVERED ? 'text-green-400' :
+                    'text-red-400'
+                  }`}>{currentOrder.status.replace('_', ' ')}</span>
+                </p>
               </div>
-            </div>
-
-            <div>
-              <h4 className="font-semibold text-white mb-2">Delivery Address</h4>
-              <div className="text-sm text-gray-300">
-                <p>{currentOrder.customerAddress}</p>
-                <p>PIN: {currentOrder.customerPincode}</p>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-white">₹{currentOrder.totalAmount}</p>
+                <p className="text-sm text-gray-400">COD Amount</p>
               </div>
             </div>
           </div>
 
-          <div className="mb-6">
-            <h4 className="font-semibold text-white mb-2">Items ({currentOrder.items.length})</h4>
-            <div className="bg-gray-700 rounded-lg p-3">
-              <div className="space-y-1">
+          {/* Customer & Seller Info */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h4 className="font-semibold text-white mb-3">Customer Details</h4>
+              <div className="space-y-2 text-sm text-gray-300">
+                <p><strong className="text-gray-400">Name:</strong> {currentOrder.customerName}</p>
+                <p><strong className="text-gray-400">Phone:</strong> {currentOrder.customerPhone}</p>
+                <p><strong className="text-gray-400">Address:</strong> {currentOrder.customerAddress}</p>
+                <p><strong className="text-gray-400">PIN Code:</strong> {currentOrder.customerPincode}</p>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-white mb-3">Seller Details</h4>
+              <div className="space-y-2 text-sm text-gray-300">
+                <p><strong className="text-gray-400">Seller:</strong> {currentOrder.sellerName}</p>
+                <p><strong className="text-gray-400">Items:</strong> {currentOrder.items.length} products</p>
+                <p><strong className="text-gray-400">Payment:</strong> Cash on Delivery</p>
+                {currentOrder.deliveryBoyName && (
+                  <p><strong className="text-gray-400">Assigned to:</strong> {currentOrder.deliveryBoyName}</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Order Items */}
+          <div>
+            <h4 className="font-semibold text-white mb-3">Order Items</h4>
+            <div className="bg-gray-700 rounded-lg p-4">
+              <div className="space-y-2">
                 {currentOrder.items.map((item, index) => (
                   <div key={index} className="flex justify-between text-sm text-gray-300">
                     <span>{item.productName} x {item.quantity} {item.unit}</span>
@@ -439,24 +556,42 @@ const DeliveryScanner: React.FC = () => {
 
               {paymentMethod === 'upi' && (
                 <div className="space-y-4">
-                  {upiQRCode && (
-                    <div className="text-center">
-                      <img src={upiQRCode} alt="UPI QR Code" className="mx-auto mb-2" />
-                      <p className="text-sm text-gray-400">Show this QR to customer for payment</p>
+                  {sellerUpiId ? (
+                    <>
+                      <div className="bg-gray-700 border border-gray-600 rounded-lg p-3">
+                        <p className="text-xs text-gray-400 mb-1">Seller UPI ID:</p>
+                        <p className="text-sm text-green-300 font-mono font-semibold break-all">{sellerUpiId}</p>
+                      </div>
+                      {upiQRCode && (
+                        <div className="text-center bg-white rounded-lg p-4">
+                          {upiQrSvg ? (
+                            <div className="mx-auto mb-2 w-64 h-64" dangerouslySetInnerHTML={{ __html: upiQrSvg }} />
+                          ) : (
+                            <p className="text-sm text-red-500">Unable to render QR</p>
+                          )}
+                          <p className="text-sm text-gray-600 font-semibold">Scan to pay ₹{currentOrder.totalAmount}</p>
+                          <p className="text-xs text-gray-500 mt-1">to {currentOrder.sellerName}</p>
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                          UPI Transaction ID
+                        </label>
+                        <input
+                          type="text"
+                          value={transactionId}
+                          onChange={(e) => setTransactionId(e.target.value)}
+                          placeholder="Enter transaction ID after payment"
+                          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="bg-red-900 border border-red-700 text-red-300 p-4 rounded-lg text-center">
+                      <p className="font-semibold mb-1">⚠️ UPI Not Available</p>
+                      <p className="text-sm">Seller has not configured UPI ID. Please use cash payment or contact the seller.</p>
                     </div>
                   )}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      UPI Transaction ID
-                    </label>
-                    <input
-                      type="text"
-                      value={transactionId}
-                      onChange={(e) => setTransactionId(e.target.value)}
-                      placeholder="Enter transaction ID after payment"
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
                 </div>
               )}
             </div>
@@ -470,8 +605,8 @@ const DeliveryScanner: React.FC = () => {
               </button>
               <button
                 onClick={handlePaymentConfirm}
-                disabled={loading}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                disabled={loading || (paymentMethod === 'upi' && !sellerUpiId)}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Processing...' : 'Confirm Delivery'}
               </button>
