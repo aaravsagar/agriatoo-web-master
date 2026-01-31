@@ -157,7 +157,6 @@ const SellerProducts: React.FC = () => {
   };
 
   const openModal = async (product?: Product) => {
-    // Check user profile before opening modal
     const freshUserData = await getFreshUserData();
     
     if (!freshUserData?.pincode) {
@@ -168,6 +167,24 @@ const SellerProducts: React.FC = () => {
       alert('No delivery areas found. Please update your profile to generate delivery coverage.');
       return;
     }
+
+    // Now proceed to open the modal
+    if (product) {
+      setEditingProduct(product);
+      setFormData({
+        name: product.name,
+        description: product.description,
+        category: product.category,
+        price: product.price.toString(),
+        unit: product.unit,
+        stock: product.stock.toString(),
+        images: product.images.length > 0 ? product.images : ['']
+      });
+    } else {
+      resetForm();
+    }
+    
+    setShowModal(true);
   };
 
   const handleDelete = async (productId: string) => {
@@ -192,23 +209,6 @@ const SellerProducts: React.FC = () => {
       images: ['']
     });
     setEditingProduct(null);
-    
-    if (product) {
-      setEditingProduct(product);
-      setFormData({
-        name: product.name,
-        description: product.description,
-        category: product.category,
-        price: product.price.toString(),
-        unit: product.unit,
-        stock: product.stock.toString(),
-        images: product.images.length > 0 ? product.images : ['']
-      });
-    } else {
-      resetForm();
-    }
-    
-    setShowModal(true);
   };
 
   const addImageField = () => {
