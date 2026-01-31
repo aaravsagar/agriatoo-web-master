@@ -29,8 +29,11 @@ const DeliveryDashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      // Fetch all orders to show comprehensive delivery statistics
-      const q = query(collection(db, 'orders'));
+      // Fetch only orders assigned to this delivery boy
+      const q = query(
+        collection(db, 'orders'),
+        where('deliveryBoyId', '==', user?.id || '')
+      );
       const snapshot = await getDocs(q);
       let orders = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -42,31 +45,28 @@ const DeliveryDashboard: React.FC = () => {
       // Frontend sorting by creation date (newest first)
       orders.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       
-      // Filter orders relevant to delivery operations
-      const deliveryRelevantOrders = orders.filter(order => 
-        order.deliveryBoyId === user?.id || 
-        order.status === ORDER_STATUSES.PACKED
-      );
-      
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const todaysOrders = deliveryRelevantOrders.filter(order => {
+      const todaysOrders = orders.filter(order => {
         const orderDate = new Date(order.createdAt);
         orderDate.setHours(0, 0, 0, 0);
         return orderDate.getTime() === today.getTime();
       });
 
-      const completedToday = todaysOrders.filter(order => 
+      const completedToday = orders.filter(order => {
+        const orderDate = new Date(order.deliveredAt || order.createdAt);
+        orderDate.setHours(0, 0, 0, 0);
+        return orderDate.getTime() === today.getTime() && 
         order.status === ORDER_STATUSES.DELIVERED
-      ).length;
+      }).length;
 
-      const pendingDeliveries = deliveryRelevantOrders.filter(order => 
+      const pendingDeliveries = orders.filter(order => 
         order.status === ORDER_STATUSES.OUT_FOR_DELIVERY
       ).length;
 
-      const totalDelivered = deliveryRelevantOrders.filter(order => 
-        order.status === ORDER_STATUSES.DELIVERED && order.deliveryBoyId === user?.id
+      const totalDelivered = orders.filter(order => 
+        order.status === ORDER_STATUSES.DELIVERED
       ).length;
 
       // Sort today's orders by distance if user has pincode
@@ -75,7 +75,7 @@ const DeliveryDashboard: React.FC = () => {
         : todaysOrders;
 
       setStats({
-        assignedOrders: deliveryRelevantOrders.filter(order => order.deliveryBoyId === user?.id).length,
+        assignedOrders: orders.length,
         completedToday,
         pendingDeliveries,
         totalDelivered

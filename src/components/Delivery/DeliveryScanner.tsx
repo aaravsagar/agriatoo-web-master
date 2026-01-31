@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, addDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
-import { Order } from '../../types';
+import { Order, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
-import { QrCode, CheckCircle, XCircle, Scan } from 'lucide-react';
+import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
+import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign } from 'lucide-react';
 
 const DeliveryScanner: React.FC = () => {
   const { user } = useAuth();
@@ -14,6 +15,11 @@ const DeliveryScanner: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [deliveryReason, setDeliveryReason] = useState('');
   const [showReasonModal, setShowReasonModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi'>('cash');
+  const [cashAmount, setCashAmount] = useState('');
+  const [upiQRCode, setUpiQRCode] = useState('');
+  const [transactionId, setTransactionId] = useState('');
 
   const handleScan = async () => {
     if (!scannedOrderId.trim()) {
@@ -51,6 +57,12 @@ const DeliveryScanner: React.FC = () => {
           setLoading(false);
           return;
         }
+        // Check if order is assigned to this delivery boy
+        if (order.assignedDeliveryBoys && !order.assignedDeliveryBoys.includes(user?.id || '')) {
+          alert('This order is not assigned to you. Please contact the seller.');
+          setLoading(false);
+          return;
+        }
       } else if (scanMode === 'delivery') {
         if (order.status !== ORDER_STATUSES.OUT_FOR_DELIVERY) {
           alert('This order is not out for delivery. Status: ' + order.status.replace('_', ' '));
@@ -73,7 +85,7 @@ const DeliveryScanner: React.FC = () => {
     }
   };
 
-  const updateOrderStatus = async (newStatus: string, reason?: string) => {
+  const updateOrderStatus = async (newStatus: string, reason?: string, paymentData?: any) => {
     if (!currentOrder) return;
 
     setLoading(true);
@@ -85,22 +97,53 @@ const DeliveryScanner: React.FC = () => {
       };
 
       if (newStatus === ORDER_STATUSES.OUT_FOR_DELIVERY) {
-        updateData.deliveryBoyId = user?.id; // Assign delivery boy when picking up
+        updateData.deliveryBoyId = user?.id;
         updateData.deliveryBoyName = user?.name;
         updateData.outForDeliveryAt = new Date();
       } else if (newStatus === ORDER_STATUSES.DELIVERED) {
         updateData.deliveredAt = new Date();
+        if (paymentData) {
+          updateData.deliveryPaymentMethod = paymentData.method;
+          if (paymentData.method === 'cash') {
+            updateData.cashCollected = paymentData.amount;
+          } else if (paymentData.method === 'upi') {
+            updateData.upiTransactionId = paymentData.transactionId;
+          }
+        }
       } else if (newStatus === ORDER_STATUSES.NOT_DELIVERED && reason) {
         updateData.deliveryReason = reason;
       }
 
       await updateDoc(doc(db, 'orders', currentOrder.id), updateData);
       
+      // Create delivery record for delivered orders
+      if (newStatus === ORDER_STATUSES.DELIVERED && paymentData) {
+        const deliveryRecord: Omit<DeliveryRecord, 'id'> = {
+          orderId: currentOrder.id,
+          orderNumber: currentOrder.orderId,
+          sellerId: currentOrder.sellerId,
+          sellerName: currentOrder.sellerName,
+          deliveryBoyId: user?.id || '',
+          deliveryBoyName: user?.name || '',
+          paymentMethod: paymentData.method,
+          amount: currentOrder.totalAmount,
+          cashCollected: paymentData.method === 'cash' ? paymentData.amount : undefined,
+          upiTransactionId: paymentData.method === 'upi' ? paymentData.transactionId : undefined,
+          timestamp: new Date(),
+          customerName: currentOrder.customerName,
+          customerAddress: currentOrder.customerAddress
+        };
+        
+        await addDoc(collection(db, 'deliveryRecords'), deliveryRecord);
+      }
+      
       alert(`Order ${newStatus.replace('_', ' ')} successfully!`);
       setCurrentOrder(null);
       setScannedOrderId('');
       setDeliveryReason('');
       setShowReasonModal(false);
+      setShowPaymentModal(false);
+      resetPaymentForm();
     } catch (error) {
       console.error('Error updating order status:', error);
       alert('Error updating order status');
@@ -109,12 +152,56 @@ const DeliveryScanner: React.FC = () => {
     }
   };
 
+  const resetPaymentForm = () => {
+    setPaymentMethod('cash');
+    setCashAmount('');
+    setUpiQRCode('');
+    setTransactionId('');
+  };
+
   const handleDeliveryAction = (delivered: boolean) => {
     if (delivered) {
-      updateOrderStatus(ORDER_STATUSES.DELIVERED);
+      setShowPaymentModal(true);
     } else {
       setShowReasonModal(true);
     }
+  };
+
+  const handlePaymentConfirm = () => {
+    if (paymentMethod === 'cash') {
+      const amount = parseFloat(cashAmount);
+      if (!amount || amount <= 0) {
+        alert('Please enter a valid cash amount');
+        return;
+      }
+      updateOrderStatus(ORDER_STATUSES.DELIVERED, undefined, {
+        method: 'cash',
+        amount: amount
+      });
+    } else if (paymentMethod === 'upi') {
+      if (!transactionId.trim()) {
+        alert('Please enter the UPI transaction ID');
+        return;
+      }
+      updateOrderStatus(ORDER_STATUSES.DELIVERED, undefined, {
+        method: 'upi',
+        transactionId: transactionId
+      });
+    }
+  };
+
+  const generateUPIPayment = () => {
+    if (!currentOrder) return;
+    
+    const upiQR = generateUPIQRCode({
+      upiId: 'seller@paytm', // This should come from seller's profile
+      amount: currentOrder.totalAmount,
+      transactionNote: `Payment for order ${currentOrder.orderId}`,
+      merchantName: currentOrder.sellerName
+    });
+    
+    setUpiQRCode(upiQR);
+    setTransactionId(generateTransactionId());
   };
 
   const handleNotDelivered = () => {
@@ -260,7 +347,10 @@ const DeliveryScanner: React.FC = () => {
             {scanMode === 'delivery' && currentOrder.status === ORDER_STATUSES.OUT_FOR_DELIVERY && (
               <>
                 <button
-                  onClick={() => handleDeliveryAction(true)}
+                  onClick={() => {
+                    generateUPIPayment();
+                    handleDeliveryAction(true);
+                  }}
                   disabled={loading}
                   className="flex-1 flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
                 >
@@ -293,6 +383,100 @@ const DeliveryScanner: React.FC = () => {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Payment Method Modal */}
+      {showPaymentModal && currentOrder && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+            <h3 className="text-lg font-medium mb-4 text-white">Payment Collection</h3>
+            <p className="text-gray-300 mb-4">Order Amount: ₹{currentOrder.totalAmount}</p>
+            
+            <div className="space-y-4 mb-6">
+              <div className="flex space-x-4">
+                <button
+                  onClick={() => setPaymentMethod('cash')}
+                  className={`flex-1 flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
+                    paymentMethod === 'cash'
+                      ? 'bg-green-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  <DollarSign className="w-5 h-5" />
+                  <span>Cash</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setPaymentMethod('upi');
+                    generateUPIPayment();
+                  }}
+                  className={`flex-1 flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-colors ${
+                    paymentMethod === 'upi'
+                      ? 'bg-green-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  <CreditCard className="w-5 h-5" />
+                  <span>UPI</span>
+                </button>
+              </div>
+
+              {paymentMethod === 'cash' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Cash Collected (₹)
+                  </label>
+                  <input
+                    type="number"
+                    value={cashAmount}
+                    onChange={(e) => setCashAmount(e.target.value)}
+                    placeholder={currentOrder.totalAmount.toString()}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              )}
+
+              {paymentMethod === 'upi' && (
+                <div className="space-y-4">
+                  {upiQRCode && (
+                    <div className="text-center">
+                      <img src={upiQRCode} alt="UPI QR Code" className="mx-auto mb-2" />
+                      <p className="text-sm text-gray-400">Show this QR to customer for payment</p>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      UPI Transaction ID
+                    </label>
+                    <input
+                      type="text"
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value)}
+                      placeholder="Enter transaction ID after payment"
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setShowPaymentModal(false)}
+                className="flex-1 px-4 py-2 border border-gray-600 text-gray-300 rounded-md hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePaymentConfirm}
+                disabled={loading}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                {loading ? 'Processing...' : 'Confirm Delivery'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
