@@ -42,6 +42,13 @@ const DeliveryScanner: React.FC = () => {
 
   const startCamera = async () => {
     try {
+      // First check if camera permission is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Camera access is not supported on this device/browser. Please enter Order ID manually.');
+        return;
+      }
+
+      // Request camera permission explicitly
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: 'environment', // Use back camera
@@ -51,9 +58,19 @@ const DeliveryScanner: React.FC = () => {
       });
       setCameraStream(stream);
       setShowCamera(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error accessing camera:', error);
-      alert('Unable to access camera. Please check permissions or enter Order ID manually.');
+      
+      // Provide specific error messages based on the error type
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        alert('Camera permission was denied. Please allow camera access in your browser settings to use the QR scanner, or enter Order ID manually.');
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        alert('No camera found on this device. Please enter Order ID manually.');
+      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        alert('Camera is already in use by another application. Please close other apps using the camera or enter Order ID manually.');
+      } else {
+        alert('Unable to access camera. Please check permissions in your browser settings or enter Order ID manually.');
+      }
     }
   };
 

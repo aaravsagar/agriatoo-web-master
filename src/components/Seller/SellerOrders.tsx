@@ -197,16 +197,30 @@ const SellerOrders: React.FC = () => {
     }
   };
 
-  const printReceipt = (order: Order) => {
+  const printReceipt = async (order: Order) => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
-      const receiptHtml = generateReceiptHTML(order);
+      const receiptHtml = await generateReceiptHTML(order);
       printWindow.document.write(receiptHtml);
       printWindow.document.close();
     }
   };
 
-  const generateReceiptHTML = (order: Order): string => {
+  const generateReceiptHTML = async (order: Order): Promise<string> => {
+    // Generate QR code SVG
+    let qrSvg = '';
+    try {
+      const qrcodeGenerator = await import('qrcode-generator');
+      const qrFactory = qrcodeGenerator.default || qrcodeGenerator;
+      const qr = qrFactory(0, 'L');
+      qr.addData(order.orderId);
+      qr.make();
+      qrSvg = qr.createSvgTag(4); // cell size 4 for print
+    } catch (error) {
+      console.error('Error generating QR code:', error);
+      qrSvg = '<svg width="100" height="100"><text x="50" y="50" text-anchor="middle">QR Error</text></svg>';
+    }
+
     return `
       <html>
         <head>
@@ -234,7 +248,7 @@ const SellerOrders: React.FC = () => {
                 
                 <div class="qr-section">
                   <div class="qr-code">
-                    <canvas id="qr-${order.orderId}" width="70" height="70"></canvas>
+                    ${qrSvg}
                   </div>
                   <div class="qr-label">Scan to Update</div>
                 </div>
@@ -267,24 +281,6 @@ const SellerOrders: React.FC = () => {
               <div class="instructions">Present this receipt to customer • Collect exact amount • Scan QR after delivery</div>
             </div>
           </div>
-          
-          <script>
-            // Generate QR code using a simple QR library or canvas
-            function generateQR(text, canvasId) {
-              const canvas = document.getElementById(canvasId);
-              if (canvas) {
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#000';
-                ctx.fillRect(0, 0, 70, 70);
-                ctx.fillStyle = '#fff';
-                ctx.font = '8px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText('QR CODE', 35, 30);
-                ctx.fillText(text.substring(0, 10), 35, 45);
-              }
-            }
-            generateQR('${order.orderId}', 'qr-${order.orderId}');
-          </script>
         </body>
       </html>
     `;
@@ -340,12 +336,15 @@ const SellerOrders: React.FC = () => {
       .qr-code {
         width: 70px;
         height: 70px;
-        border: 1px solid #ccc;
         margin: 0 auto 4px auto;
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #f9f9f9;
+        background: white;
+      }
+      .qr-code svg {
+        width: 100%;
+        height: 100%;
       }
       .qr-label {
         font-size: 8px;
@@ -398,196 +397,160 @@ const SellerOrders: React.FC = () => {
         text-align: center;
         font-size: 12px;
         margin-top: 6px;
-        padding: 4px;
-        background: #f0f0f0;
-        border: 1px solid #000;
+        padding-top: 6px;
+        border-top: 2px solid #000;
       }
       .seller-section {
-        border-top: 1px solid #000;
-        padding-top: 6px;
         margin-top: 8px;
-      }
-      .seller-name, .seller-shop {
-        font-size: 10px;
-        margin-bottom: 2px;
+        padding-top: 8px;
+        border-top: 1px solid #ccc;
       }
       .seller-name {
         font-weight: bold;
+        font-size: 10px;
+      }
+      .seller-shop {
+        font-size: 9px;
+        color: #666;
       }
       .receipt-footer {
-        background: #f9f9f9;
+        background: #f0f0f0;
         padding: 6px;
-        border-top: 1px solid #000;
+        border-top: 2px solid #000;
+        font-size: 8px;
         text-align: center;
       }
       .instructions {
-        font-size: 8px;
-        color: #666;
-        line-height: 1.2;
+        color: #333;
       }
       @media print {
-        body { margin: 0; padding: 5px; }
-        .receipt { margin: 0; }
+        body {
+          margin: 0;
+          padding: 0;
+        }
       }
     `;
   };
 
-  const printBulkReceipts = (orders: Order[]) => {
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      const receiptsHtml = orders.map((order, index) => `
-        <div class="receipt" style="${index > 0 ? 'page-break-before: always;' : ''}">
-          ${generateReceiptHTML(order).match(/<div class="receipt">(.*?)<\/div>/s)?.[1] || ''}
-        </div>
-      `).join('');
-      
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Bulk Delivery Receipts</title>
-            <style>
-              ${getReceiptStyles()}
-              @media print {
-                body { margin: 0; padding: 0; }
-                .receipt { page-break-after: always; margin-bottom: 20px; }
-                .receipt:last-child { page-break-after: auto; }
-              }
-            </style>
-          </head>
-          <body onload="window.print();">
-            ${receiptsHtml}
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-    }
-  };
-
-  const filteredOrders = selectedStatus
+  const filteredOrders = selectedStatus 
     ? orders.filter(order => order.status === selectedStatus)
     : orders;
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case ORDER_STATUSES.RECEIVED:
-        return 'bg-blue-900 text-blue-300';
-      case ORDER_STATUSES.PACKED:
-        return 'bg-yellow-900 text-yellow-300';
-      case ORDER_STATUSES.OUT_FOR_DELIVERY:
-        return 'bg-purple-900 text-purple-300';
-      case ORDER_STATUSES.DELIVERED:
-        return 'bg-green-900 text-green-300';
-      case ORDER_STATUSES.NOT_DELIVERED:
-        return 'bg-red-900 text-red-300';
-      default:
-        return 'bg-gray-900 text-gray-300';
-    }
+  const getStatusColor = (status: string): string => {
+    const colors: { [key: string]: string } = {
+      [ORDER_STATUSES.RECEIVED]: 'bg-blue-100 text-blue-800',
+      [ORDER_STATUSES.PACKED]: 'bg-yellow-100 text-yellow-800',
+      [ORDER_STATUSES.OUT_FOR_DELIVERY]: 'bg-purple-100 text-purple-800',
+      [ORDER_STATUSES.DELIVERED]: 'bg-green-100 text-green-800',
+      [ORDER_STATUSES.NOT_DELIVERED]: 'bg-red-100 text-red-800',
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
   };
 
   return (
-    <div>
+    <div className="max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-white">Orders Management</h2>
-        <div className="flex space-x-3">
+        <h2 className="text-2xl font-bold text-white">My Orders</h2>
+        
+        <div className="flex items-center space-x-4">
           {permanentDeliveryPartner ? (
-            <div className="flex items-center space-x-3 bg-green-900 border border-green-700 px-4 py-2 rounded-lg">
-              <UserCheck className="w-5 h-5 text-green-300" />
-              <div className="text-sm">
-                <div className="text-green-300 font-semibold">{permanentDeliveryPartner.name}</div>
-                <div className="text-green-400 text-xs">{permanentDeliveryPartner.phone}</div>
+            <div className="bg-gray-800 border border-gray-700 px-4 py-2 rounded-lg flex items-center space-x-3">
+              <UserCheck className="w-5 h-5 text-green-400" />
+              <div>
+                <div className="text-xs text-gray-400">Permanent Partner</div>
+                <div className="text-sm font-medium text-white">{permanentDeliveryPartner.name}</div>
               </div>
               <button
                 onClick={removePermanentPartner}
-                className="ml-2 text-red-400 hover:text-red-300"
-                title="Remove Partner"
+                className="ml-2 p-1 hover:bg-gray-700 rounded"
+                title="Remove partner"
               >
-                <UserMinus className="w-4 h-4" />
+                <UserMinus className="w-4 h-4 text-red-400" />
               </button>
             </div>
           ) : (
             <button
               onClick={() => setShowPartnerModal(true)}
-              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 flex items-center space-x-2"
             >
               <UserPlus className="w-5 h-5" />
-              <span>Assign Permanent Delivery Partner</span>
+              <span>Assign Permanent Partner</span>
             </button>
           )}
-          
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All Status</option>
-            <option value={ORDER_STATUSES.RECEIVED}>Received</option>
-            <option value={ORDER_STATUSES.PACKED}>Packed</option>
-            <option value={ORDER_STATUSES.OUT_FOR_DELIVERY}>Out for Delivery</option>
-            <option value={ORDER_STATUSES.DELIVERED}>Delivered</option>
-            <option value={ORDER_STATUSES.NOT_DELIVERED}>Not Delivered</option>
-          </select>
         </div>
       </div>
 
-      {permanentDeliveryPartner && (
-        <div className="bg-green-900 border border-green-700 text-green-300 p-4 rounded-lg mb-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-sm">
-                <strong>📦 Permanent Delivery Partner Assigned:</strong> All packed orders will be automatically assigned to {permanentDeliveryPartner.name}.
-              </p>
-              <p className="text-xs mt-2 text-green-400">
-                Phone: {permanentDeliveryPartner.phone} | Area: {permanentDeliveryPartner.pincode}
-                {permanentDeliveryPartner.upiId && ` | UPI: ${permanentDeliveryPartner.upiId}`}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Status Filter */}
+      <div className="mb-4 flex space-x-2">
+        <button
+          onClick={() => setSelectedStatus('')}
+          className={`px-4 py-2 rounded-md ${
+            selectedStatus === '' 
+              ? 'bg-purple-600 text-white' 
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+          }`}
+        >
+          All Orders ({orders.length})
+        </button>
+        {Object.values(ORDER_STATUSES).map((status) => {
+          const count = orders.filter(o => o.status === status).length;
+          return (
+            <button
+              key={status}
+              onClick={() => setSelectedStatus(status)}
+              className={`px-4 py-2 rounded-md ${
+                selectedStatus === status 
+                  ? 'bg-purple-600 text-white' 
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {status.replace('_', ' ')} ({count})
+            </button>
+          );
+        })}
+      </div>
 
       {loading ? (
-        <div className="text-center py-8">
-          <div className="w-8 h-8 border-2 border-blue-200 border-t-blue-400 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading orders...</p>
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
+          <p className="mt-4 text-gray-400">Loading orders...</p>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <div className="bg-gray-800 rounded-lg border border-gray-700">
+        <div className="bg-gray-800 rounded-lg shadow overflow-hidden border border-gray-700">
+          <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-700">
               <thead className="bg-gray-900">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Order ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Customer
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Amount
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Date
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700">
+              <tbody className="bg-gray-800 divide-y divide-gray-700">
                 {filteredOrders.map((order) => (
                   <tr key={order.id} className="hover:bg-gray-750">
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
                       {order.orderId}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="text-sm font-medium text-white">{order.customerName}</div>
-                        <div className="text-sm text-gray-400">{order.customerPhone}</div>
-                        <div className="text-sm text-gray-400">{order.customerPincode}</div>
-                      </div>
+                      <div className="text-sm font-medium text-white">{order.customerName}</div>
+                      <div className="text-sm text-gray-400">{order.customerPhone}</div>
+                      <div className="text-sm text-gray-400">{order.customerPincode}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
                       ₹{order.totalAmount}
