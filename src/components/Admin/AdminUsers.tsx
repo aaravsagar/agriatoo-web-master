@@ -4,7 +4,7 @@ import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
 import { User } from '../../types';
 import { USER_ROLES } from '../../config/constants';
-import { Plus, Edit, Trash2, UserPlus } from 'lucide-react';
+import { Plus, CreditCard as Edit, Trash2, UserPlus } from 'lucide-react';
 
 const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
