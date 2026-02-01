@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc, addDoc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, addDoc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { Order, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
 import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
-import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign, AlertCircle } from 'lucide-react';
+import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign, AlertCircle, Camera, Package2, Printer } from 'lucide-react';
+import QRScanner from './QRScanner';
 
 const DeliveryScanner: React.FC = () => {
   const { user } = useAuth();
   const [scanMode, setScanMode] = useState<'pickup' | 'delivery'>('pickup');
   const [scannedOrderId, setScannedOrderId] = useState('');
+  const [bulkOrderIds, setBulkOrderIds] = useState<string[]>(['']);
+  const [isBulkMode, setIsBulkMode] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
+  const [bulkOrders, setBulkOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [deliveryReason, setDeliveryReason] = useState('');
   const [showReasonModal, setShowReasonModal] = useState(false);
@@ -22,6 +26,153 @@ const DeliveryScanner: React.FC = () => {
   const [transactionId, setTransactionId] = useState('');
   const [showAssignmentWarning, setShowAssignmentWarning] = useState(false);
   const [sellerUpiId, setSellerUpiId] = useState('');
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const [retryAttempts, setRetryAttempts] = useState<{[orderId: string]: number}>({});
+  const [showQRScanner, setShowQRScanner] = useState(false);
+
+  // Cleanup camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraStream]);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment', // Use back camera
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      });
+      setCameraStream(stream);
+      setShowCamera(true);
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      alert('Unable to access camera. Please check permissions or enter Order ID manually.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowCamera(false);
+  };
+
+  const handleQRScan = (result: string) => {
+    setScannedOrderId(result);
+    setShowQRScanner(false);
+    // Auto-scan after QR detection
+    setTimeout(() => {
+      handleScan();
+    }, 100);
+  };
+
+  const handleQRError = (error: string) => {
+    console.error('QR Scanner error:', error);
+    alert(error);
+  };
+
+  const addBulkOrderField = () => {
+    setBulkOrderIds([...bulkOrderIds, '']);
+  };
+
+  const updateBulkOrderField = (index: number, value: string) => {
+    const newIds = [...bulkOrderIds];
+    newIds[index] = value;
+    setBulkOrderIds(newIds);
+  };
+
+  const removeBulkOrderField = (index: number) => {
+    const newIds = bulkOrderIds.filter((_, i) => i !== index);
+    setBulkOrderIds(newIds.length > 0 ? newIds : ['']);
+  };
+
+  const handleBulkScan = async () => {
+    const validOrderIds = bulkOrderIds.filter(id => id.trim() !== '');
+    if (validOrderIds.length === 0) {
+      alert('Please enter at least one Order ID');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const orders: Order[] = [];
+      
+      for (const orderId of validOrderIds) {
+        const q = query(
+          collection(db, 'orders'),
+          where('orderId', '==', orderId.trim())
+        );
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+          const orderDoc = snapshot.docs[0];
+          const order = {
+            id: orderDoc.id,
+            ...orderDoc.data(),
+            createdAt: orderDoc.data().createdAt?.toDate() || new Date(),
+            updatedAt: orderDoc.data().updatedAt?.toDate() || new Date()
+          } as Order;
+          
+          if (order.status === ORDER_STATUSES.PACKED) {
+            orders.push(order);
+          }
+        }
+      }
+      
+      if (orders.length === 0) {
+        alert('No valid packed orders found');
+        return;
+      }
+      
+      setBulkOrders(orders);
+    } catch (error) {
+      console.error('Error scanning bulk orders:', error);
+      alert('Error scanning orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBulkPickup = async () => {
+    if (bulkOrders.length === 0) return;
+    
+    setLoading(true);
+    try {
+      const batch = writeBatch(db);
+      
+      bulkOrders.forEach(order => {
+        const orderRef = doc(db, 'orders', order.id);
+        batch.update(orderRef, {
+          status: ORDER_STATUSES.OUT_FOR_DELIVERY,
+          deliveryBoyId: user?.id,
+          deliveryBoyName: user?.name,
+          outForDeliveryAt: new Date(),
+          updatedAt: new Date(),
+          assignedDeliveryBoys: [user?.id]
+        });
+      });
+      
+      await batch.commit();
+      
+      alert(`${bulkOrders.length} orders marked as Out for Delivery!`);
+      setBulkOrders([]);
+      setBulkOrderIds(['']);
+      setIsBulkMode(false);
+    } catch (error) {
+      console.error('Error updating bulk orders:', error);
+      alert('Error updating orders');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleScan = async () => {
     if (!scannedOrderId.trim()) {
@@ -64,11 +215,16 @@ const DeliveryScanner: React.FC = () => {
           return;
         }
         
-        // Show warning if order was assigned to someone else, but allow pickup anyway
-        if (order.assignedDeliveryBoys && 
-            order.assignedDeliveryBoys.length > 0 && 
-            !order.assignedDeliveryBoys.includes(user?.id || '')) {
-          setShowAssignmentWarning(true);
+        // Check if this delivery boy is permanently assigned to this seller
+        const isAssignedPartner = await checkPermanentAssignment(order.sellerId);
+        
+        if (!isAssignedPartner) {
+          // Show warning if order was assigned to someone else, but allow pickup anyway
+          if (order.assignedDeliveryBoys && 
+              order.assignedDeliveryBoys.length > 0 && 
+              !order.assignedDeliveryBoys.includes(user?.id || '')) {
+            setShowAssignmentWarning(true);
+          }
         }
         
         // Set the order regardless of assignment
@@ -96,6 +252,24 @@ const DeliveryScanner: React.FC = () => {
       alert('Error scanning order');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkPermanentAssignment = async (sellerId: string): Promise<boolean> => {
+    if (!user) return false;
+    
+    try {
+      const q = query(
+        collection(db, 'sellerDeliveryPartners'),
+        where('sellerId', '==', sellerId),
+        where('deliveryBoyId', '==', user.id),
+        where('isActive', '==', true)
+      );
+      const snapshot = await getDocs(q);
+      return !snapshot.empty;
+    } catch (error) {
+      console.error('Error checking permanent assignment:', error);
+      return false;
     }
   };
 
@@ -152,6 +326,13 @@ const DeliveryScanner: React.FC = () => {
         }
       } else if (newStatus === ORDER_STATUSES.NOT_DELIVERED && reason) {
         updateData.deliveryReason = reason;
+        // Increment retry attempts
+        const currentAttempts = retryAttempts[currentOrder.id] || 0;
+        updateData.retryAttempts = currentAttempts + 1;
+        setRetryAttempts(prev => ({
+          ...prev,
+          [currentOrder.id]: currentAttempts + 1
+        }));
       }
 
       await updateDoc(doc(db, 'orders', currentOrder.id), updateData);
@@ -188,6 +369,29 @@ const DeliveryScanner: React.FC = () => {
     } catch (error) {
       console.error('Error updating order status:', error);
       alert('Error updating order status');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const retryDelivery = async (order: Order) => {
+    if (!confirm('Are you sure you want to retry delivery for this order?')) return;
+    
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'orders', order.id), {
+        status: ORDER_STATUSES.OUT_FOR_DELIVERY,
+        deliveryReason: '',
+        updatedAt: new Date(),
+        retryAt: new Date()
+      });
+      
+      alert('Order marked for retry delivery!');
+      setCurrentOrder(null);
+      setScannedOrderId('');
+    } catch (error) {
+      console.error('Error retrying delivery:', error);
+      alert('Error retrying delivery');
     } finally {
       setLoading(false);
     }
@@ -302,6 +506,9 @@ const DeliveryScanner: React.FC = () => {
             setCurrentOrder(null);
             setScannedOrderId('');
             setShowAssignmentWarning(false);
+            setBulkOrders([]);
+            setIsBulkMode(false);
+            stopCamera();
           }}
           className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
             scanMode === 'pickup'
@@ -317,6 +524,9 @@ const DeliveryScanner: React.FC = () => {
             setCurrentOrder(null);
             setScannedOrderId('');
             setShowAssignmentWarning(false);
+            setBulkOrders([]);
+            setIsBulkMode(false);
+            stopCamera();
           }}
           className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
             scanMode === 'delivery'
@@ -328,6 +538,30 @@ const DeliveryScanner: React.FC = () => {
         </button>
       </div>
 
+      {/* Bulk Mode Toggle for Pickup */}
+      {scanMode === 'pickup' && (
+        <div className="flex justify-center mb-4">
+          <button
+            onClick={() => {
+              setIsBulkMode(!isBulkMode);
+              setCurrentOrder(null);
+              setScannedOrderId('');
+              setBulkOrders([]);
+              setBulkOrderIds(['']);
+              stopCamera();
+            }}
+            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+              isBulkMode
+                ? 'bg-orange-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            <Package2 className="w-4 h-4 inline mr-2" />
+            {isBulkMode ? 'Exit Bulk Mode' : 'Bulk Pickup Mode'}
+          </button>
+        </div>
+      )}
+
       {/* Info Banner */}
       <div className={`p-4 rounded-lg mb-6 ${
         scanMode === 'pickup' 
@@ -336,38 +570,139 @@ const DeliveryScanner: React.FC = () => {
       }`}>
         <p className="text-sm">
           {scanMode === 'pickup' 
-            ? '📦 Pickup Mode: Scan any packed order to pick it up for delivery. You can pick up orders from any seller.'
+            ? isBulkMode
+              ? '📦 Bulk Pickup Mode: Enter multiple Order IDs to pick up multiple orders at once.'
+              : '📦 Pickup Mode: Scan any packed order to pick it up for delivery. You can pick up orders from any seller.'
             : '🚚 Delivery Mode: Scan orders that you have picked up to mark them as delivered or not delivered.'
           }
         </p>
       </div>
 
-      {/* Scanner Input */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-        <h3 className="text-lg font-medium mb-4 text-white flex items-center">
-          <Scan className="w-5 h-5 mr-2" />
-          Scan Order QR Code
-        </h3>
-        
-        <div className="flex space-x-2">
-          <input
-            type="text"
-            value={scannedOrderId}
-            onChange={(e) => setScannedOrderId(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleScan()}
-            placeholder="Enter or scan Order ID"
-            className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-          />
-          <button
-            onClick={handleScan}
-            disabled={loading}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center space-x-2"
-          >
-            <QrCode className="w-5 h-5" />
-            <span>{loading ? 'Scanning...' : 'Scan'}</span>
-          </button>
+      {/* Scanner Input - Single or Bulk */}
+      {!isBulkMode ? (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
+          <h3 className="text-lg font-medium mb-4 text-white flex items-center">
+            <Scan className="w-5 h-5 mr-2" />
+            Scan Order QR Code
+          </h3>
+          
+          <div className="flex space-x-2 mb-4">
+            <input
+              type="text"
+              value={scannedOrderId}
+              onChange={(e) => setScannedOrderId(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleScan()}
+              placeholder="Enter or scan Order ID"
+              className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+            />
+            <button
+              onClick={() => setShowQRScanner(true)}
+              className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+            >
+              <Camera className="w-5 h-5" />
+              <span>QR Scanner</span>
+            </button>
+            <button
+              onClick={handleScan}
+              disabled={loading}
+              className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center space-x-2"
+            >
+              <QrCode className="w-5 h-5" />
+              <span>{loading ? 'Scanning...' : 'Scan'}</span>
+            </button>
+          </div>
+          
+          {/* QR Scanner */}
+          {showQRScanner && (
+            <div className="mb-4">
+              <div className="relative">
+                <QRScanner
+                  onScan={handleQRScan}
+                  onError={handleQRError}
+                  isActive={showQRScanner}
+                />
+                <button
+                  onClick={() => setShowQRScanner(false)}
+                  className="absolute top-2 right-2 bg-red-600 text-white px-3 py-1 rounded-lg text-sm"
+                >
+                  Close Scanner
+                </button>
+              </div>
+              <p className="text-gray-400 text-sm mt-2 text-center">
+                Position the QR code within the green square for automatic scanning.
+              </p>
+            </div>
+          )}
         </div>
-      </div>
+      ) : (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
+          <h3 className="text-lg font-medium mb-4 text-white flex items-center">
+            <Package2 className="w-5 h-5 mr-2" />
+            Bulk Order Pickup
+          </h3>
+          
+          <div className="space-y-3 mb-4">
+            {bulkOrderIds.map((orderId, index) => (
+              <div key={index} className="flex space-x-2">
+                <input
+                  type="text"
+                  value={orderId}
+                  onChange={(e) => updateBulkOrderField(index, e.target.value)}
+                  placeholder={`Order ID ${index + 1}`}
+                  className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                {bulkOrderIds.length > 1 && (
+                  <button
+                    onClick={() => removeBulkOrderField(index)}
+                    className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          
+          <div className="flex space-x-2 mb-4">
+            <button
+              onClick={addBulkOrderField}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Add Order ID
+            </button>
+            <button
+              onClick={handleBulkScan}
+              disabled={loading}
+              className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              {loading ? 'Scanning...' : 'Scan All Orders'}
+            </button>
+          </div>
+          
+          {/* Bulk Orders Display */}
+          {bulkOrders.length > 0 && (
+            <div className="bg-gray-700 rounded-lg p-4">
+              <h4 className="text-white font-medium mb-3">Found {bulkOrders.length} Orders Ready for Pickup:</h4>
+              <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
+                {bulkOrders.map((order, index) => (
+                  <div key={order.id} className="flex justify-between items-center text-sm text-gray-300 bg-gray-600 p-2 rounded">
+                    <span>{order.orderId}</span>
+                    <span>{order.customerName}</span>
+                    <span>₹{order.totalAmount}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={handleBulkPickup}
+                disabled={loading}
+                className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
+              >
+                {loading ? 'Processing...' : `Mark All ${bulkOrders.length} Orders as Out for Delivery`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Assignment Warning */}
       {showAssignmentWarning && currentOrder && (
@@ -498,6 +833,15 @@ const DeliveryScanner: React.FC = () => {
               {currentOrder.deliveryReason && (
                 <p className="text-red-300 text-sm mt-1">Reason: {currentOrder.deliveryReason}</p>
               )}
+              <div className="mt-3 text-center">
+                <button
+                  onClick={() => retryDelivery(currentOrder)}
+                  disabled={loading}
+                  className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50"
+                >
+                  Retry Delivery
+                </button>
+              </div>
             </div>
           )}
         </div>

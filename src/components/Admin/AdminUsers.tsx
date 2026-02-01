@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, updateDoc, doc, setDoc } from 'firebase/firestore'; // Changed addDoc to setDoc
+import { collection, getDocs, updateDoc, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { db, auth } from '../../config/firebase';
 import { User } from '../../types';
 import { USER_ROLES } from '../../config/constants';
-import { Plus, Edit, Trash2, UserPlus } from 'lucide-react'; // Note: Edit is imported as CreditCard, but used as Edit; assuming it's a typo, changed to Edit
+import { Plus, CreditCard as Edit, Trash2, UserPlus } from 'lucide-react';
 
 const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -20,7 +20,8 @@ const AdminUsers: React.FC = () => {
     address: '',
     pincode: '',
     shopName: '',
-    deliveryRadius: 10
+    deliveryRadius: 10,
+    upiId: ''
   });
 
   useEffect(() => {
@@ -73,9 +74,11 @@ const AdminUsers: React.FC = () => {
           pincode: formData.pincode,
           shopName: formData.shopName,
           deliveryRadius: formData.deliveryRadius,
+          upiId: formData.role === 'delivery' ? formData.upiId : '',
           isActive: true,
           createdAt: new Date(),
-          uid: user.uid
+          uid: user.uid,
+          updatedAt: new Date()
         });
       }
 
@@ -98,6 +101,7 @@ const AdminUsers: React.FC = () => {
       await fetchUsers();
     } catch (error) {
       console.error('Error deleting user:', error);
+      alert('Error deleting user. Please try again.');
     }
   };
 
@@ -105,13 +109,14 @@ const AdminUsers: React.FC = () => {
     setFormData({
       email: '',
       password: '',
-      name: '',
+      name: 'New User', // Set default name to avoid "New User Name" error
       phone: '',
       role: USER_ROLES.SELLER,
       address: '',
       pincode: '',
       shopName: '',
-      deliveryRadius: 10
+      deliveryRadius: 10,
+      upiId: ''
     });
     setEditingUser(null);
   };
@@ -128,7 +133,8 @@ const AdminUsers: React.FC = () => {
         address: user.address || '',
         pincode: user.pincode || '',
         shopName: user.shopName || '',
-        deliveryRadius: user.deliveryRadius || 10
+        deliveryRadius: user.deliveryRadius || 10,
+        upiId: user.upiId || ''
       });
     } else {
       resetForm();
@@ -312,6 +318,16 @@ const AdminUsers: React.FC = () => {
                 onChange={(e) => setFormData({ ...formData, deliveryRadius: parseInt(e.target.value) || 10 })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
               />
+              
+              {formData.role === 'delivery' && (
+                <input
+                  type="text"
+                  placeholder="UPI ID (for payments)"
+                  value={formData.upiId}
+                  onChange={(e) => setFormData({ ...formData, upiId: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              )}
 
               <div className="flex space-x-2">
                 <button

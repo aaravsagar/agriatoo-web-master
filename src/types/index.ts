@@ -65,6 +65,8 @@ export interface Order {
   cashCollected?: number;
   upiTransactionId?: string;
   deliveryReason?: string; // For not_delivered orders
+  retryAttempts?: number; // Number of delivery retry attempts
+  retryAt?: Date; // Last retry timestamp
   qrCode?: string; // QR code for the order
   createdAt: Date;
   updatedAt: Date;
