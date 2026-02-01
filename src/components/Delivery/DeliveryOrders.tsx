@@ -62,7 +62,7 @@ const DeliveryOrders: React.FC = () => {
     if (!user) return;
     
     try {
-      // Only show orders that are assigned to this delivery boy
+      // Show orders that are assigned to this delivery boy OR where they are a permanent partner
       const q = query(
         collection(db, 'orders'),
         where('deliveryBoyId', '==', user.id)
