@@ -5,7 +5,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { Order, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
 import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
-import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign, AlertCircle, Camera, Package2 } from 'lucide-react';
+import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign, AlertCircle, Camera, Package2, Printer } from 'lucide-react';
 import QRScanner from './QRScanner';
 
 const DeliveryScanner: React.FC = () => {
@@ -596,8 +596,6 @@ const DeliveryScanner: React.FC = () => {
               className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
             />
             <button
-              onClick={startCamera}
-              className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
               onClick={() => setShowQRScanner(true)}
               className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
             >

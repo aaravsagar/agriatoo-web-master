@@ -198,114 +198,264 @@ const SellerOrders: React.FC = () => {
   };
 
   const printReceipt = (order: Order) => {
-    const qrCode = generateOrderQR(order.orderId);
-    
     const printWindow = window.open('', '_blank');
     if (printWindow) {
+      const receiptHtml = generateReceiptHTML(order);
+      printWindow.document.write(receiptHtml);
+      printWindow.document.close();
+    }
+  };
+
+  const generateReceiptHTML = (order: Order): string => {
+    return `
+      <html>
+        <head>
+          <title>Delivery Receipt - ${order.orderId}</title>
+          <style>
+            ${getReceiptStyles()}
+          </style>
+        </head>
+        <body onload="window.print();">
+          <div class="receipt">
+            <div class="receipt-header">
+              <div class="brand">AGRIATOO DELIVERY</div>
+              <div class="order-id">Order: ${order.orderId}</div>
+            </div>
+            
+            <div class="receipt-content">
+              <div class="section-row">
+                <div class="customer-section">
+                  <div class="section-title">DELIVER TO:</div>
+                  <div class="customer-name">${order.customerName}</div>
+                  <div class="customer-phone">${order.customerPhone}</div>
+                  <div class="customer-address">${order.customerAddress}</div>
+                  <div class="customer-pin">PIN: ${order.customerPincode}</div>
+                </div>
+                
+                <div class="qr-section">
+                  <div class="qr-code">
+                    <canvas id="qr-${order.orderId}" width="70" height="70"></canvas>
+                  </div>
+                  <div class="qr-label">Scan to Update</div>
+                </div>
+              </div>
+              
+              <div class="items-section">
+                <div class="section-title">ITEMS & TOTAL:</div>
+                <div class="items-list">
+                  ${order.items.map(item => `
+                    <div class="item-row">
+                      <span class="item-name">${item.productName}</span>
+                      <span class="item-qty">${item.quantity} ${item.unit}</span>
+                      <span class="item-price">₹${(item.price * item.quantity).toFixed(2)}</span>
+                    </div>
+                  `).join('')}
+                </div>
+                <div class="total-amount">
+                  <strong>COD TOTAL: ₹${order.totalAmount}</strong>
+                </div>
+              </div>
+              
+              <div class="seller-section">
+                <div class="section-title">FROM SELLER:</div>
+                <div class="seller-name">${order.sellerName}</div>
+                <div class="seller-shop">${order.sellerShopName || order.sellerName}</div>
+              </div>
+            </div>
+            
+            <div class="receipt-footer">
+              <div class="instructions">Present this receipt to customer • Collect exact amount • Scan QR after delivery</div>
+            </div>
+          </div>
+          
+          <script>
+            // Generate QR code using a simple QR library or canvas
+            function generateQR(text, canvasId) {
+              const canvas = document.getElementById(canvasId);
+              if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, 70, 70);
+                ctx.fillStyle = '#fff';
+                ctx.font = '8px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('QR CODE', 35, 30);
+                ctx.fillText(text.substring(0, 10), 35, 45);
+              }
+            }
+            generateQR('${order.orderId}', 'qr-${order.orderId}');
+          </script>
+        </body>
+      </html>
+    `;
+  };
+
+  const getReceiptStyles = (): string => {
+    return `
+      body { 
+        font-family: 'Courier New', monospace; 
+        margin: 0; 
+        padding: 10px; 
+        background: white;
+      }
+      .receipt {
+        width: 4in;
+        border: 2px solid #000;
+        margin: 0 auto;
+        background: white;
+      }
+      .receipt-header {
+        background: #000;
+        color: white;
+        padding: 8px;
+        text-align: center;
+        border-bottom: 2px solid #000;
+      }
+      .brand {
+        font-weight: bold;
+        font-size: 14px;
+        letter-spacing: 1px;
+      }
+      .order-id {
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .receipt-content {
+        padding: 8px;
+      }
+      .section-row {
+        display: flex;
+        margin-bottom: 8px;
+      }
+      .customer-section {
+        flex: 1;
+        padding-right: 8px;
+      }
+      .qr-section {
+        width: 80px;
+        text-align: center;
+        border: 1px solid #000;
+        padding: 4px;
+      }
+      .qr-code {
+        width: 70px;
+        height: 70px;
+        border: 1px solid #ccc;
+        margin: 0 auto 4px auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f9f9f9;
+      }
+      .qr-label {
+        font-size: 8px;
+        color: #666;
+      }
+      .section-title {
+        font-weight: bold;
+        font-size: 10px;
+        margin-bottom: 4px;
+        text-decoration: underline;
+      }
+      .customer-name {
+        font-weight: bold;
+        font-size: 11px;
+        margin-bottom: 2px;
+      }
+      .customer-phone, .customer-address, .customer-pin {
+        font-size: 9px;
+        margin-bottom: 1px;
+      }
+      .items-section {
+        border: 1px solid #000;
+        padding: 6px;
+        margin: 8px 0;
+      }
+      .items-list {
+        margin: 4px 0;
+      }
+      .item-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 9px;
+        margin-bottom: 2px;
+        border-bottom: 1px dotted #ccc;
+        padding-bottom: 1px;
+      }
+      .item-name {
+        flex: 1;
+        margin-right: 4px;
+      }
+      .item-qty {
+        width: 50px;
+        text-align: center;
+      }
+      .item-price {
+        width: 50px;
+        text-align: right;
+      }
+      .total-amount {
+        text-align: center;
+        font-size: 12px;
+        margin-top: 6px;
+        padding: 4px;
+        background: #f0f0f0;
+        border: 1px solid #000;
+      }
+      .seller-section {
+        border-top: 1px solid #000;
+        padding-top: 6px;
+        margin-top: 8px;
+      }
+      .seller-name, .seller-shop {
+        font-size: 10px;
+        margin-bottom: 2px;
+      }
+      .seller-name {
+        font-weight: bold;
+      }
+      .receipt-footer {
+        background: #f9f9f9;
+        padding: 6px;
+        border-top: 1px solid #000;
+        text-align: center;
+      }
+      .instructions {
+        font-size: 8px;
+        color: #666;
+        line-height: 1.2;
+      }
+      @media print {
+        body { margin: 0; padding: 5px; }
+        .receipt { margin: 0; }
+      }
+    `;
+  };
+
+  const printBulkReceipts = (orders: Order[]) => {
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const receiptsHtml = orders.map((order, index) => `
+        <div class="receipt" style="${index > 0 ? 'page-break-before: always;' : ''}">
+          ${generateReceiptHTML(order).match(/<div class="receipt">(.*?)<\/div>/s)?.[1] || ''}
+        </div>
+      `).join('');
+      
       printWindow.document.write(`
         <html>
           <head>
-            <title>Delivery Sticker - ${order.orderId}</title>
+            <title>Bulk Delivery Receipts</title>
             <style>
-              body { 
-                font-family: Arial, sans-serif; 
-                margin: 0; 
-                padding: 10px; 
-                font-size: 12px;
-                width: 4in;
-                background: white;
-              }
-              .sticker {
-                border: 2px solid #000;
-                padding: 8px;
-                background: white;
-              }
-              .header {
-                text-align: center;
-                border-bottom: 1px solid #000;
-                padding-bottom: 5px;
-                margin-bottom: 8px;
-              }
-              .brand {
-                font-weight: bold;
-                font-size: 14px;
-                color: #000;
-              }
-              .order-id {
-                font-weight: bold;
-                font-size: 11px;
-                margin: 2px 0;
-              }
-              .section {
-                margin-bottom: 8px;
-                font-size: 10px;
-              }
-              .label {
-                font-weight: bold;
-                display: inline-block;
-                width: 60px;
-              }
-              .qr-section {
-                text-align: center;
-                margin: 8px 0;
-                border: 1px solid #000;
-                padding: 5px;
-              }
-              .cod-amount {
-                font-size: 14px;
-                font-weight: bold;
-                text-align: center;
-                background: #f0f0f0;
-                padding: 5px;
-                border: 1px solid #000;
-                margin: 5px 0;
-              }
-              .barcode {
-                text-align: center;
-                font-family: 'Courier New', monospace;
-                font-size: 8px;
-                letter-spacing: 2px;
-                margin-top: 5px;
-              }
+              ${getReceiptStyles()}
               @media print {
-                body { margin: 0; padding: 5px; }
-                .no-print { display: none; }
+                body { margin: 0; padding: 0; }
+                .receipt { page-break-after: always; margin-bottom: 20px; }
+                .receipt:last-child { page-break-after: auto; }
               }
             </style>
           </head>
           <body onload="window.print();">
-            <div class="sticker">
-              <div class="header">
-                <div class="brand">HYPERLOCAL DELIVERY</div>
-                <div class="order-id">Order: ${order.orderId}</div>
-              </div>
-              
-              <div class="section">
-                <strong>DELIVER TO:</strong><br/>
-                ${order.customerName}<br/>
-                ${order.customerPhone}<br/>
-                ${order.customerAddress}<br/>
-                PIN: ${order.customerPincode}
-              </div>
-
-              <div class="section">
-                <strong>FROM:</strong><br/>
-                ${order.sellerName}
-              </div>
-
-              <div class="cod-amount">
-                COD: ₹${order.totalAmount}
-              </div>
-
-              <div class="qr-section">
-                ${qrCode}
-                <div class="barcode">${order.orderId}</div>
-              </div>
-
-              <div class="section" style="font-size: 8px; text-align: center; border-top: 1px solid #000; padding-top: 5px;">
-                Scan QR to update delivery status
-              </div>
-            </div>
+            ${receiptsHtml}
           </body>
         </html>
       `);
