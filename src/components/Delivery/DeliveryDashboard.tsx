@@ -29,10 +29,11 @@ const DeliveryDashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      // Fetch only orders assigned to this delivery boy
+      // Show only orders that are "Out for Delivery" and assigned to this delivery boy
       const q = query(
         collection(db, 'orders'),
-        where('deliveryBoyId', '==', user?.id || '')
+        where('deliveryBoyId', '==', user?.id || ''),
+        where('status', '==', ORDER_STATUSES.OUT_FOR_DELIVERY)
       );
       const snapshot = await getDocs(q);
       let orders = snapshot.docs.map(doc => ({
@@ -57,17 +58,21 @@ const DeliveryDashboard: React.FC = () => {
       const completedToday = orders.filter(order => {
         const orderDate = new Date(order.deliveredAt || order.createdAt);
         orderDate.setHours(0, 0, 0, 0);
-        return orderDate.getTime() === today.getTime() && 
-        order.status === ORDER_STATUSES.DELIVERED
+        return orderDate.getTime() === today.getTime()
       }).length;
 
       const pendingDeliveries = orders.filter(order => 
         order.status === ORDER_STATUSES.OUT_FOR_DELIVERY
       ).length;
 
-      const totalDelivered = orders.filter(order => 
-        order.status === ORDER_STATUSES.DELIVERED
-      ).length;
+      // Get total delivered from all orders (not just out for delivery)
+      const allOrdersQ = query(
+        collection(db, 'orders'),
+        where('deliveryBoyId', '==', user?.id || ''),
+        where('status', '==', ORDER_STATUSES.DELIVERED)
+      );
+      const allOrdersSnapshot = await getDocs(allOrdersQ);
+      const totalDelivered = allOrdersSnapshot.size;
 
       // Sort today's orders by distance if user has pincode
       const sortedTodaysOrders = user.pincode 
@@ -108,7 +113,7 @@ const DeliveryDashboard: React.FC = () => {
               <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-400">Assigned Orders</p>
+                    <p className="text-sm font-medium text-gray-400">Out for Delivery</p>
                     <p className="text-3xl font-bold text-white">{stats.assignedOrders}</p>
                   </div>
                   <Package className="w-12 h-12 text-blue-400" />
@@ -147,7 +152,7 @@ const DeliveryDashboard: React.FC = () => {
             </div>
 
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-              <h2 className="text-xl font-bold mb-4 text-white">Today's Delivery Route</h2>
+              <h2 className="text-xl font-bold mb-4 text-white">Current Deliveries</h2>
               {todaysOrders.length > 0 ? (
                 <div className="space-y-3">
                   {todaysOrders.slice(0, 5).map((order, index) => (
@@ -177,7 +182,7 @@ const DeliveryDashboard: React.FC = () => {
                   )}
                 </div>
               ) : (
-                <p className="text-gray-400">No orders assigned for today</p>
+                <p className="text-gray-400">No orders out for delivery</p>
               )}
             </div>
           </div>

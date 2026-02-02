@@ -62,10 +62,11 @@ const DeliveryOrders: React.FC = () => {
     if (!user) return;
     
     try {
-      // Show orders that are assigned to this delivery boy OR where they are a permanent partner
+      // Show only orders that are "Out for Delivery" and assigned to this delivery boy
       const q = query(
         collection(db, 'orders'),
-        where('deliveryBoyId', '==', user.id)
+        where('deliveryBoyId', '==', user.id),
+        where('status', '==', ORDER_STATUSES.OUT_FOR_DELIVERY)
       );
       const snapshot = await getDocs(q);
       let ordersData = snapshot.docs.map(doc => ({
@@ -176,8 +177,8 @@ const DeliveryOrders: React.FC = () => {
 
       <div className="bg-blue-900 border border-blue-700 text-blue-300 p-4 rounded-lg mb-6">
         <p className="text-sm">
-          📦 <strong>Note:</strong> Orders appear here only after you scan them for pickup. 
-          Use the Scanner tab to scan package QR codes and start deliveries.
+          📦 <strong>Note:</strong> Only orders that are currently "Out for Delivery" are shown here. 
+          Use the Scanner tab to scan package QR codes and manage deliveries.
         </p>
       </div>
 
