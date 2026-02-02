@@ -3,6 +3,7 @@ import { updateDoc, doc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { Order, User, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
+import { generateUPIQRCode } from '../../utils/upiUtils';
 import { CheckCircle, XCircle, Phone, MapPin, Package, DollarSign, CreditCard, ArrowRight } from 'lucide-react';
 
 interface OrderDetailsModalProps {
@@ -21,7 +22,21 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
   const [transactionId, setTransactionId] = useState('');
   const [sliderValue, setSliderValue] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [upiQRCode, setUpiQRCode] = useState<string>('');
 
+  // Generate UPI QR code when UPI payment is selected
+  React.useEffect(() => {
+    if (paymentMethod === 'upi' && user?.upiId) {
+      const upiData = {
+        upiId: user.upiId,
+        amount: order.totalAmount,
+        transactionNote: `Payment for order ${order.orderId}`,
+        merchantName: user.name || 'Delivery Partner'
+      };
+      const upiUrl = generateUPIQRCode(upiData);
+      setUpiQRCode(upiUrl);
+    }
+  }, [paymentMethod, user, order]);
   const updateOrderStatus = async (newStatus: string, reason?: string, paymentData?: any) => {
     setLoading(true);
 
@@ -72,11 +87,21 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
         ...(paymentData && { paymentData })
       } as DeliveryRecord);
 
+      // Update local order state to reflect changes
+      order.status = newStatus;
+      if (newStatus === ORDER_STATUSES.DELIVERED) {
+        order.deliveredAt = new Date();
+      } else if (newStatus === ORDER_STATUSES.NOT_DELIVERED) {
+        order.notDeliveredReason = reason;
+        order.notDeliveredAt = new Date();
+      }
+
       onClose();
 
     } catch (error) {
       console.error('Error updating order:', error);
-      alert('Error updating order status');
+      // Don't show alert, just log error and close modal
+      onClose();
     } finally {
       setLoading(false);
     }
@@ -104,7 +129,6 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
 
   const handleNotDelivered = async () => {
     if (!deliveryReason.trim()) {
-      alert('Please provide a reason for non-delivery');
       return;
     }
 
@@ -112,6 +136,7 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
   };
 
   const isDelivered = order.status === ORDER_STATUSES.DELIVERED;
+  const isNotDelivered = order.status === ORDER_STATUSES.NOT_DELIVERED;
   const isOutForDelivery = order.status === ORDER_STATUSES.OUT_FOR_DELIVERY;
   const needsSlider = order.status === ORDER_STATUSES.PACKED || order.status === ORDER_STATUSES.RECEIVED;
 
@@ -126,6 +151,11 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
               {isDelivered && (
                 <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-medium">
                   Order Delivered
+                </span>
+              )}
+              {isNotDelivered && (
+                <span className="px-3 py-1 bg-red-600 text-white rounded-full text-sm font-medium">
+                  Not Delivered
                 </span>
               )}
               <button
@@ -196,8 +226,15 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
             </div>
           </div>
 
+          {/* Not Delivered Reason Display */}
+          {isNotDelivered && order.notDeliveredReason && (
+            <div className="bg-red-900 bg-opacity-30 border border-red-700 rounded-lg p-4">
+              <h3 className="text-lg font-semibold text-red-300 mb-2">Reason for Non-Delivery</h3>
+              <p className="text-red-200">{order.notDeliveredReason}</p>
+            </div>
+          )}
           {/* Action Section */}
-          {!isDelivered && (
+          {!isDelivered && !isNotDelivered && (
             <div className="bg-gray-700 rounded-lg p-4">
               {needsSlider && (
                 <div>
@@ -244,6 +281,21 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
 
               {isOutForDelivery && (
                 <div className="space-y-4">
+                  {/* UPI QR Code Display */}
+                  {upiQRCode && (
+                    <div className="text-center">
+                      <p className="text-sm text-gray-300 mb-2">Show this QR code to customer:</p>
+                      <div className="bg-white p-4 rounded-lg inline-block">
+                        <img 
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiQRCode)}`}
+                          alt="UPI QR Code"
+                          className="w-48 h-48"
+                        />
+                      </div>
+                      <p className="text-xs text-gray-400 mt-2">Amount: ₹{order.totalAmount}</p>
+                    </div>
+                  )}
+                  
                   <h3 className="text-lg font-semibold text-white">Delivery Actions</h3>
                   <div className="flex space-x-3">
                     <button
@@ -381,7 +433,7 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
               </button>
               <button
                 onClick={handleNotDelivered}
-                disabled={loading}
+                disabled={loading || !deliveryReason.trim()}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
               >
                 {loading ? 'Updating...' : 'Confirm'}

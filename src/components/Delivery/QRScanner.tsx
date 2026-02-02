@@ -110,8 +110,9 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive, manual
         (result, error) => {
           if (result) {
             console.log('QR Code detected:', result.getText());
+            // Stop scanning immediately after successful scan
+            stopScanning();
             onScan(result.getText());
-            // Don't stop scanning for continuous mode
           }
           if (error && error.name !== 'NotFoundException') {
             console.warn('QR scan error:', error);
@@ -142,6 +143,12 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive, manual
     if (codeReader) {
       try {
         codeReader.reset();
+        // Also stop all video tracks to ensure camera is released
+        if (videoRef.current && videoRef.current.srcObject) {
+          const stream = videoRef.current.srcObject as MediaStream;
+          stream.getTracks().forEach(track => track.stop());
+          videoRef.current.srcObject = null;
+        }
         console.log('QR scanner stopped');
       } catch (error) {
         console.error('Error stopping QR scanner:', error);

@@ -21,16 +21,34 @@ const DeliveryScanner: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [showOrderDetails, setShowOrderDetails] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [useManualTrigger, setUseManualTrigger] = useState(true);
-  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [scannerKey, setScannerKey] = useState(0); // Force remount scanner
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const toastIdCounter = useRef(0);
+  const isProcessingRef = useRef(false); // Prevent multiple scans
 
   // Initialize audio element
   useEffect(() => {
-    audioRef.current = new Audio('/assets/beep.mp3');
-    audioRef.current.preload = 'auto';
+    // Create a simple beep sound programmatically to avoid file dependency
+    const createBeepSound = () => {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800;
+      oscillator.type = 'square';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+    };
+    
+    audioRef.current = { play: createBeepSound } as any;
   }, []);
 
   // Toast notification functions
@@ -44,41 +62,51 @@ const DeliveryScanner: React.FC = () => {
     }, 3000);
   };
 
-  // Audio feedback functions using the beep.mp3 file
-  const playBeep = async (times: number = 1) => {
+  // Audio feedback functions
+  const playBeep = (times: number = 1) => {
     if (!audioRef.current) return;
     
+    // Play beeps with delay
+    let delay = 0;
     for (let i = 0; i < times; i++) {
-      try {
-        // Clone the audio to allow overlapping plays
-        const audio = audioRef.current.cloneNode() as HTMLAudioElement;
-        await audio.play();
-        
-        // Wait for beep duration plus a small gap before next beep
-        if (i < times - 1) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+      setTimeout(() => {
+        try {
+          audioRef.current?.play();
+        } catch (error) {
+          console.error('Error playing beep:', error);
         }
-      } catch (error) {
-        console.error('Error playing beep:', error);
+      }, delay);
+      delay += 200; // 200ms between beeps
       }
-    }
   };
 
   const playSuccessBeep = () => playBeep(1);
-  const playAlreadyDeliveredBeep = () => playBeep(2);
-  const playErrorBeep = () => playBeep(3);
+  const playErrorBeep = () => playBeep(2);
 
   const startScanner = () => {
+    setCurrentOrder(null);
+    setShowOrderDetails(false);
+    isProcessingRef.current = false;
+    setScannerKey(prev => prev + 1); // Force remount
     setShowQRScanner(true);
   };
 
   const stopScanner = () => {
     setShowQRScanner(false);
-    setCurrentOrder(null);
+    setScannerKey(prev => prev + 1); // Force remount to ensure cleanup
   };
 
   const handleQRScan = async (scannedOrderId: string) => {
+    // Prevent multiple simultaneous scans
+    if (isProcessingRef.current) {
+      console.log('Already processing a scan, ignoring...');
+      return;
+    }
+    
     if (!scannedOrderId.trim()) return;
+
+    isProcessingRef.current = true;
+    setShowQRScanner(false); // Stop scanner immediately
 
     try {
       const q = query(
@@ -89,11 +117,11 @@ const DeliveryScanner: React.FC = () => {
 
       if (snapshot.empty) {
         playErrorBeep();
-        if (isBulkMode) {
-          showToast('Order not found: ' + scannedOrderId, 'error');
-        } else {
-          showToast('Order not found', 'error');
-        }
+        showToast('Order not found: ' + scannedOrderId, 'error');
+        // Restart scanner after error
+        setTimeout(() => {
+          startScanner();
+        }, 2000);
         return;
       }
 
@@ -107,10 +135,17 @@ const DeliveryScanner: React.FC = () => {
 
       // Check if order was already delivered
       if (order.status === ORDER_STATUSES.DELIVERED) {
-        playAlreadyDeliveredBeep();
+        playSuccessBeep();
         setCurrentOrder(order);
         setShowOrderDetails(true);
-        setShowQRScanner(false);
+        return;
+      }
+
+      // Check if order was not delivered
+      if (order.status === ORDER_STATUSES.NOT_DELIVERED) {
+        playErrorBeep();
+        setCurrentOrder(order);
+        setShowOrderDetails(true);
         return;
       }
 
@@ -124,6 +159,10 @@ const DeliveryScanner: React.FC = () => {
       if (!scannableStatuses.includes(order.status)) {
         playErrorBeep();
         showToast(`Cannot process this order. Status: ${order.status.replace(/_/g, ' ')}`, 'error');
+        // Restart scanner after error
+        setTimeout(() => {
+          startScanner();
+        }, 2000);
         return;
       }
 
@@ -145,37 +184,45 @@ const DeliveryScanner: React.FC = () => {
         order.deliveryBoyId = user?.id;
         
         playSuccessBeep();
-        if (isBulkMode) {
-          showToast(`Order ${order.orderId} marked as Out for Delivery`, 'success');
-        } else {
-          showToast('Order marked as Out for Delivery', 'success');
-        }
+        showToast(`Order ${order.orderId} marked as Out for Delivery`, 'success');
       }
 
       // Check if delivery boy is assigned
       if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
         playErrorBeep();
-        if (isBulkMode) {
-          showToast('Order assigned to another delivery person', 'error');
-        } else {
-          showToast('This order is assigned to another delivery person', 'error');
-        }
+        showToast('Order assigned to another delivery person', 'error');
+        // Restart scanner after error
+        setTimeout(() => {
+          startScanner();
+        }, 2000);
         return;
       }
 
-      // Fetch seller UPI ID
       // Show order details
       setCurrentOrder(order);
       setShowOrderDetails(true);
-      setShowQRScanner(false);
 
     } catch (error) {
       console.error('Error scanning order:', error);
       playErrorBeep();
       showToast('Error scanning order. Please try again.', 'error');
+      // Restart scanner after error
+      setTimeout(() => {
+        startScanner();
+      }, 2000);
+    } finally {
+      isProcessingRef.current = false;
     }
   };
 
+  const handleOrderModalClose = () => {
+    setShowOrderDetails(false);
+    setCurrentOrder(null);
+    // Restart scanner after closing modal
+    setTimeout(() => {
+      startScanner();
+    }, 500);
+  };
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       {/* Toast Notifications */}
@@ -232,13 +279,15 @@ const DeliveryScanner: React.FC = () => {
           ) : (
             <div className="space-y-4">
               <QRScanner
+                key={scannerKey}
                 onScan={handleQRScan}
                 onError={(error) => {
                   console.error('QR Scanner error:', error);
                   playErrorBeep();
+                  showToast('Scanner error: ' + error, 'error');
                 }}
                 isActive={showQRScanner}
-                manualTrigger={useManualTrigger}
+                manualTrigger={false}
               />
               <button
                 onClick={stopScanner}
@@ -257,11 +306,7 @@ const DeliveryScanner: React.FC = () => {
       {showOrderDetails && currentOrder && (
         <OrderDetailsModal 
           order={currentOrder}
-          onClose={() => {
-            setShowOrderDetails(false);
-            setCurrentOrder(null);
-            startScanner(); // Automatically reopen scanner
-          }}
+          onClose={handleOrderModalClose}
           user={user}
         />
       )}
