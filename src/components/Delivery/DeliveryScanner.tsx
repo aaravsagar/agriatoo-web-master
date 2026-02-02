@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, addDoc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
-import { Order } from '../../types';
+import { Order, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
-import { Camera, CheckCircle, XCircle, AlertCircle, Package2 } from 'lucide-react';
+import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
+import { QrCode, CheckCircle, XCircle, Camera, CreditCard, DollarSign, AlertCircle, Package2, Volume2 } from 'lucide-react';
 import QRScanner from './QRScanner';
-import OrderDetailsModal from './OrderDetailsModal';
 
 interface ToastMessage {
   id: number;
@@ -22,6 +22,7 @@ const DeliveryScanner: React.FC = () => {
   const [showOrderDetails, setShowOrderDetails] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [useManualTrigger, setUseManualTrigger] = useState(true);
+  const [isBulkMode, setIsBulkMode] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const toastIdCounter = useRef(0);
@@ -144,14 +145,21 @@ const DeliveryScanner: React.FC = () => {
         order.deliveryBoyId = user?.id;
         
         playSuccessBeep();
-        showToast('Order marked as Out for Delivery', 'success');
+        if (isBulkMode) {
+          showToast(`Order ${order.orderId} marked as Out for Delivery`, 'success');
+        } else {
+          showToast('Order marked as Out for Delivery', 'success');
+        }
       }
 
       // Check if delivery boy is assigned
       if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
         playErrorBeep();
-        showToast('This order is assigned to another delivery person', 'error');
+        if (isBulkMode) {
           showToast('Order assigned to another delivery person', 'error');
+        } else {
+          showToast('This order is assigned to another delivery person', 'error');
+        }
         return;
       }
 
