@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, where, getDocs, updateDoc, doc, addDoc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
@@ -7,6 +7,12 @@ import { ORDER_STATUSES } from '../../config/constants';
 import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
 import { QrCode, CheckCircle, XCircle, Camera, CreditCard, DollarSign, AlertCircle, Package2, Volume2 } from 'lucide-react';
 import QRScanner from './QRScanner';
+
+interface ToastMessage {
+  id: number;
+  message: string;
+  type: 'error' | 'warning' | 'success';
+}
 
 const DeliveryScanner: React.FC = () => {
   const { user } = useAuth();
@@ -25,54 +31,52 @@ const DeliveryScanner: React.FC = () => {
   const [transactionId, setTransactionId] = useState('');
   const [sellerUpiId, setSellerUpiId] = useState('');
   const [scanCount, setScanCount] = useState(0);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [upiQrSvg, setUpiQrSvg] = useState('');
+  
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const toastIdCounter = useRef(0);
 
-  // Audio feedback functions
-  const playSuccessBeep = () => {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800;
-    oscillator.type = 'sine';
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.2);
-  };
+  // Initialize audio element
+  useEffect(() => {
+    audioRef.current = new Audio('/assets/beep.mp3');
+    audioRef.current.preload = 'auto';
+  }, []);
 
-  const playErrorBeep = () => {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  // Toast notification functions
+  const showToast = (message: string, type: 'error' | 'warning' | 'success' = 'error') => {
+    const id = toastIdCounter.current++;
+    setToasts(prev => [...prev, { id, message, type }]);
     
-    // First beep
-    const oscillator1 = audioContext.createOscillator();
-    const gainNode1 = audioContext.createGain();
-    oscillator1.connect(gainNode1);
-    gainNode1.connect(audioContext.destination);
-    oscillator1.frequency.value = 400;
-    oscillator1.type = 'sine';
-    gainNode1.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode1.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-    oscillator1.start(audioContext.currentTime);
-    oscillator1.stop(audioContext.currentTime + 0.15);
-    
-    // Second beep
+    // Auto remove after 3 seconds
     setTimeout(() => {
-      const oscillator2 = audioContext.createOscillator();
-      const gainNode2 = audioContext.createGain();
-      oscillator2.connect(gainNode2);
-      gainNode2.connect(audioContext.destination);
-      oscillator2.frequency.value = 400;
-      oscillator2.type = 'sine';
-      gainNode2.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-      oscillator2.start(audioContext.currentTime);
-      oscillator2.stop(audioContext.currentTime + 0.15);
-    }, 200);
+      setToasts(prev => prev.filter(toast => toast.id !== id));
+    }, 3000);
   };
+
+  // Audio feedback functions using the beep.mp3 file
+  const playBeep = async (times: number = 1) => {
+    if (!audioRef.current) return;
+    
+    for (let i = 0; i < times; i++) {
+      try {
+        // Clone the audio to allow overlapping plays
+        const audio = audioRef.current.cloneNode() as HTMLAudioElement;
+        await audio.play();
+        
+        // Wait for beep duration plus a small gap before next beep
+        if (i < times - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      } catch (error) {
+        console.error('Error playing beep:', error);
+      }
+    }
+  };
+
+  const playSuccessBeep = () => playBeep(1);
+  const playAlreadyDeliveredBeep = () => playBeep(2);
+  const playErrorBeep = () => playBeep(3);
 
   const startScanner = () => {
     setShowQRScanner(true);
@@ -101,10 +105,9 @@ const DeliveryScanner: React.FC = () => {
       if (snapshot.empty) {
         playErrorBeep();
         if (isBulkMode) {
-          // Show error briefly in bulk mode
-          console.log('Order not found:', scannedOrderId);
+          showToast('Order not found: ' + scannedOrderId, 'error');
         } else {
-          alert('Order not found');
+          showToast('Order not found', 'error');
         }
         return;
       }
@@ -117,25 +120,74 @@ const DeliveryScanner: React.FC = () => {
         updatedAt: orderDoc.data().updatedAt?.toDate() || new Date()
       } as Order;
 
-      // Check if order is valid for delivery
-      if (order.status !== ORDER_STATUSES.OUT_FOR_DELIVERY) {
-        playErrorBeep();
-        const statusMessage = `Order status: ${order.status.replace('_', ' ')}`;
+      // Check if order was already delivered
+      if (order.status === ORDER_STATUSES.DELIVERED) {
+        playAlreadyDeliveredBeep();
         if (isBulkMode) {
-          console.log('Invalid order status:', statusMessage);
+          showToast(`Order ${order.orderId} already delivered`, 'warning');
         } else {
-          alert(`Cannot deliver this order. ${statusMessage}`);
+          showToast('This order has already been delivered', 'warning');
         }
         return;
+      }
+
+      // Allow retry for NOT_DELIVERED orders - set them back to OUT_FOR_DELIVERY
+      if (order.status === ORDER_STATUSES.NOT_DELIVERED) {
+        // Update order status to OUT_FOR_DELIVERY for retry
+        await updateDoc(doc(db, 'orders', order.id), {
+          status: ORDER_STATUSES.OUT_FOR_DELIVERY,
+          updatedAt: new Date()
+        });
+        
+        // Update local order object
+        order.status = ORDER_STATUSES.OUT_FOR_DELIVERY;
+        playSuccessBeep();
+        
+        if (isBulkMode) {
+          showToast(`Order ${order.orderId} status updated to Out for Delivery`, 'success');
+        } else {
+          showToast('Order status updated. Ready for delivery retry.', 'success');
+        }
+      }
+
+      // Allow delivery even if order is not ready or not out for delivery
+      // Valid statuses: OUT_FOR_DELIVERY, NOT_READY_FOR_PICKUP
+      const validStatuses = [
+        ORDER_STATUSES.OUT_FOR_DELIVERY,
+        ORDER_STATUSES.NOT_READY_FOR_PICKUP
+      ];
+
+      if (!validStatuses.includes(order.status)) {
+        playErrorBeep();
+        const statusMessage = `Order status: ${order.status.replace(/_/g, ' ')}`;
+        if (isBulkMode) {
+          showToast(`Invalid status - ${statusMessage}`, 'error');
+        } else {
+          showToast(`Cannot deliver this order. ${statusMessage}`, 'error');
+        }
+        return;
+      }
+
+      // If order is NOT_READY_FOR_PICKUP, update it to OUT_FOR_DELIVERY automatically
+      if (order.status === ORDER_STATUSES.NOT_READY_FOR_PICKUP) {
+        await updateDoc(doc(db, 'orders', order.id), {
+          status: ORDER_STATUSES.OUT_FOR_DELIVERY,
+          deliveryBoyId: user?.id,
+          updatedAt: new Date()
+        });
+        
+        // Update local order object
+        order.status = ORDER_STATUSES.OUT_FOR_DELIVERY;
+        order.deliveryBoyId = user?.id;
       }
 
       // Check if delivery boy is assigned
       if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
         playErrorBeep();
         if (isBulkMode) {
-          console.log('Order assigned to another delivery boy');
+          showToast('Order assigned to another delivery person', 'error');
         } else {
-          alert('This order is assigned to another delivery boy');
+          showToast('This order is assigned to another delivery person', 'error');
         }
         return;
       }
@@ -146,8 +198,8 @@ const DeliveryScanner: React.FC = () => {
       if (isBulkMode) {
         // Check if already scanned
         if (scannedOrderIds.has(order.orderId)) {
-          playErrorBeep();
-          console.log('Order already scanned:', order.orderId);
+          playAlreadyDeliveredBeep();
+          showToast(`Order ${order.orderId} already scanned`, 'warning');
           return;
         }
 
@@ -156,7 +208,7 @@ const DeliveryScanner: React.FC = () => {
         setScannedOrderIds(prev => new Set([...prev, order.orderId]));
         setScanCount(prev => prev + 1);
         playSuccessBeep();
-        console.log('Order added to bulk list:', order.orderId);
+        // Don't show success toast in bulk mode to avoid interrupting flow
       } else {
         // Single mode - show order details
         setCurrentOrder(order);
@@ -166,8 +218,10 @@ const DeliveryScanner: React.FC = () => {
     } catch (error) {
       console.error('Error scanning order:', error);
       playErrorBeep();
-      if (!isBulkMode) {
-        alert('Error scanning order');
+      if (isBulkMode) {
+        showToast('Error scanning order', 'error');
+      } else {
+        showToast('Error scanning order. Please try again.', 'error');
       }
     }
   };
@@ -192,6 +246,7 @@ const DeliveryScanner: React.FC = () => {
     setLoading(true);
 
     try {
+      const orderRef = doc(db, 'orders', order.id);
       const updateData: any = {
         status: newStatus,
         updatedAt: new Date()
@@ -199,58 +254,68 @@ const DeliveryScanner: React.FC = () => {
 
       if (newStatus === ORDER_STATUSES.DELIVERED) {
         updateData.deliveredAt = new Date();
+        updateData.deliveredBy = user?.id;
+        
         if (paymentData) {
-          updateData.deliveryPaymentMethod = paymentData.method;
-          if (paymentData.method === 'cash' && paymentData.amount) {
-            updateData.cashCollected = paymentData.amount;
-          } else if (paymentData.method === 'upi' && paymentData.transactionId) {
-            updateData.upiTransactionId = paymentData.transactionId;
-          }
+          updateData.paymentCollected = {
+            method: paymentData.method,
+            amount: paymentData.amount,
+            timestamp: new Date(),
+            collectedBy: user?.id,
+            ...(paymentData.method === 'upi' && paymentData.transactionId && {
+              transactionId: paymentData.transactionId
+            })
+          };
         }
-      } else if (newStatus === ORDER_STATUSES.NOT_DELIVERED && reason) {
-        updateData.deliveryReason = reason;
-        updateData.retryAttempts = (order.retryAttempts || 0) + 1;
       }
 
-      await updateDoc(doc(db, 'orders', order.id), updateData);
-      
-      // Create delivery record for delivered orders
-      if (newStatus === ORDER_STATUSES.DELIVERED && paymentData) {
-        const deliveryRecord: any = {
-          orderId: order.id,
-          orderNumber: order.orderId,
-          sellerId: order.sellerId,
-          sellerName: order.sellerName,
-          deliveryBoyId: user?.id || '',
-          deliveryBoyName: user?.name || '',
-          paymentMethod: paymentData.method,
-          amount: order.totalAmount,
-          timestamp: new Date(),
-          customerName: order.customerName,
-          customerAddress: order.customerAddress
-        };
-        
-        // Only add fields that have values
-        if (paymentData.method === 'cash' && paymentData.amount) {
-          deliveryRecord.cashCollected = paymentData.amount;
-        }
-        if (paymentData.method === 'upi' && paymentData.transactionId) {
-          deliveryRecord.upiTransactionId = paymentData.transactionId;
-        }
-        
-        await addDoc(collection(db, 'deliveryRecords'), deliveryRecord);
+      if (newStatus === ORDER_STATUSES.NOT_DELIVERED && reason) {
+        updateData.notDeliveredReason = reason;
+        updateData.notDeliveredAt = new Date();
+        updateData.notDeliveredBy = user?.id;
       }
-      
+
+      await updateDoc(orderRef, updateData);
+
+      // Create delivery record
+      await addDoc(collection(db, 'deliveryRecords'), {
+        orderId: order.orderId,
+        deliveryBoyId: user?.id,
+        status: newStatus,
+        timestamp: new Date(),
+        ...(reason && { reason }),
+        ...(paymentData && { paymentData })
+      } as DeliveryRecord);
+
+      if (newStatus === ORDER_STATUSES.DELIVERED) {
+        playSuccessBeep();
+        showToast('Order marked as delivered successfully!', 'success');
+      } else {
+        showToast('Order status updated', 'success');
+      }
+
+      // Reset state
+      setCurrentOrder(null);
+      setShowPaymentModal(false);
+      setShowReasonModal(false);
+      setDeliveryReason('');
+      setCashAmount('');
+      setTransactionId('');
+      setPaymentMethod('cash');
+
     } catch (error) {
-      console.error('Error updating order status:', error);
-      throw error;
+      console.error('Error updating order:', error);
+      playErrorBeep();
+      showToast('Error updating order status', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSingleDelivery = (delivered: boolean) => {
-    if (delivered) {
+  const handleSingleDelivery = (isDelivered: boolean) => {
+    if (!currentOrder) return;
+
+    if (isDelivered) {
       setShowPaymentModal(true);
     } else {
       setShowReasonModal(true);
@@ -260,62 +325,29 @@ const DeliveryScanner: React.FC = () => {
   const handlePaymentConfirm = async () => {
     if (!currentOrder) return;
 
-    if (paymentMethod === 'cash') {
-      const amount = parseFloat(cashAmount);
-      if (!amount || amount <= 0) {
-        alert('Please enter a valid cash amount');
-        return;
-      }
-      try {
-        await updateOrderStatus(currentOrder, ORDER_STATUSES.DELIVERED, undefined, {
-          method: 'cash',
-          amount: amount
-        });
-        alert('Order marked as delivered!');
-        resetSingleMode();
-      } catch (error) {
-        alert('Error updating order status');
-      }
-    } else if (paymentMethod === 'upi') {
-      if (!transactionId.trim()) {
-        alert('Please enter the UPI transaction ID');
-        return;
-      }
-      try {
-        await updateOrderStatus(currentOrder, ORDER_STATUSES.DELIVERED, undefined, {
-          method: 'upi',
-          transactionId: transactionId
-        });
-        alert('Order marked as delivered!');
-        resetSingleMode();
-      } catch (error) {
-        alert('Error updating order status');
-      }
-    }
+    const paymentData = {
+      method: paymentMethod,
+      amount: paymentMethod === 'cash' 
+        ? (parseFloat(cashAmount) || currentOrder.totalAmount)
+        : currentOrder.totalAmount,
+      ...(paymentMethod === 'upi' && transactionId && { transactionId })
+    };
+
+    await updateOrderStatus(currentOrder, ORDER_STATUSES.DELIVERED, undefined, paymentData);
   };
 
   const handleNotDelivered = async () => {
     if (!currentOrder || !deliveryReason.trim()) {
-      alert('Please provide a reason for non-delivery');
+      showToast('Please provide a reason for non-delivery', 'error');
       return;
     }
-    
-    try {
-      await updateOrderStatus(currentOrder, ORDER_STATUSES.NOT_DELIVERED, deliveryReason);
-      alert('Order marked as not delivered');
-      resetSingleMode();
-    } catch (error) {
-      alert('Error updating order status');
-    }
+
+    await updateOrderStatus(currentOrder, ORDER_STATUSES.NOT_DELIVERED, deliveryReason);
   };
 
   const handleBulkDelivery = async () => {
     if (bulkScannedOrders.length === 0) {
-      alert('No orders scanned');
-      return;
-    }
-
-    if (!confirm(`Mark all ${bulkScannedOrders.length} orders as delivered?`)) {
+      showToast('No orders scanned yet', 'error');
       return;
     }
 
@@ -323,281 +355,209 @@ const DeliveryScanner: React.FC = () => {
     try {
       const batch = writeBatch(db);
       const now = new Date();
-      
-      bulkScannedOrders.forEach(order => {
+
+      for (const order of bulkScannedOrders) {
         const orderRef = doc(db, 'orders', order.id);
         batch.update(orderRef, {
           status: ORDER_STATUSES.DELIVERED,
           deliveredAt: now,
-          deliveryPaymentMethod: 'cash',
-          cashCollected: order.totalAmount,
+          deliveredBy: user?.id,
           updatedAt: now
         });
 
         // Add delivery record
         const deliveryRecordRef = doc(collection(db, 'deliveryRecords'));
         batch.set(deliveryRecordRef, {
-          orderId: order.id,
-          orderNumber: order.orderId,
-          sellerId: order.sellerId,
-          sellerName: order.sellerName,
-          deliveryBoyId: user?.id || '',
-          deliveryBoyName: user?.name || '',
-          paymentMethod: 'cash',
-          amount: order.totalAmount,
-          cashCollected: order.totalAmount,
-          timestamp: now,
-          customerName: order.customerName,
-          customerAddress: order.customerAddress
+          orderId: order.orderId,
+          deliveryBoyId: user?.id,
+          status: ORDER_STATUSES.DELIVERED,
+          timestamp: now
         });
-      });
-      
+      }
+
       await batch.commit();
       
-      alert(`${bulkScannedOrders.length} orders marked as delivered!`);
+      playSuccessBeep();
+      showToast(`Successfully delivered ${bulkScannedOrders.length} orders!`, 'success');
+      
+      // Reset bulk state
       setBulkScannedOrders([]);
       setScannedOrderIds(new Set());
       setScanCount(0);
       setShowQRScanner(false);
+
     } catch (error) {
-      console.error('Error updating bulk orders:', error);
-      alert('Error updating orders');
+      console.error('Error in bulk delivery:', error);
+      playErrorBeep();
+      showToast('Error updating bulk orders', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const resetSingleMode = () => {
-    setCurrentOrder(null);
-    setShowPaymentModal(false);
-    setShowReasonModal(false);
-    setDeliveryReason('');
-    resetPaymentForm();
-  };
-
-  const resetPaymentForm = () => {
-    setPaymentMethod('cash');
-    setCashAmount('');
-    setUpiQRCode('');
-    setTransactionId('');
-    setSellerUpiId('');
-  };
-
-  const generateUPIPayment = () => {
+  const generateUPIPayment = async () => {
     if (!currentOrder || !sellerUpiId) return;
-    
-    const upiString = `upi://pay?pa=${sellerUpiId}&pn=${currentOrder.sellerName}&am=${currentOrder.totalAmount}&cu=INR`;
-    setUpiQRCode(upiString);
-  };
 
-  // Generate UPI QR SVG
-  const [upiQrSvg, setUpiQrSvg] = useState('');
-
-  useEffect(() => {
-    let mounted = true;
-    if (!upiQRCode) {
-      setUpiQrSvg('');
-      return;
+    try {
+      const qrCode = await generateUPIQRCode(
+        sellerUpiId,
+        currentOrder.totalAmount,
+        `Order ${currentOrder.orderId}`
+      );
+      setUpiQRCode(qrCode);
+      setUpiQrSvg(qrCode);
+    } catch (error) {
+      console.error('Error generating UPI QR code:', error);
+      showToast('Error generating payment QR code', 'error');
     }
-
-    const generate = async () => {
-      try {
-        const mod = await import('qrcode-generator');
-        const qrcodeFactory = mod && mod.default ? mod.default : mod;
-        const qr = qrcodeFactory(0, 'L');
-        qr.addData(upiQRCode);
-        qr.make();
-        const svg = qr.createSvgTag(6);
-        if (mounted) setUpiQrSvg(svg);
-      } catch (e) {
-        console.error('Error generating QR SVG:', e);
-        if (mounted) setUpiQrSvg('');
-      }
-    };
-
-    generate();
-
-    return () => {
-      mounted = false;
-    };
-  }, [upiQRCode]);
+  };
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* Mode Selector */}
-      <div className="flex space-x-4 mb-6">
-        <button
-          onClick={() => {
-            setIsBulkMode(false);
-            setShowQRScanner(false);
-            setCurrentOrder(null);
-            setBulkScannedOrders([]);
-            setScannedOrderIds(new Set());
-          }}
-          className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-            !isBulkMode
-              ? 'bg-green-600 text-white'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-        >
-          🚚 Single Delivery Mode
-        </button>
-        <button
-          onClick={() => {
-            setIsBulkMode(true);
-            setShowQRScanner(false);
-            setCurrentOrder(null);
-            setBulkScannedOrders([]);
-            setScannedOrderIds(new Set());
-          }}
-          className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-            isBulkMode
-              ? 'bg-purple-600 text-white'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-        >
-          📦 Bulk Delivery Mode
-        </button>
-      </div>
-
-      {/* Info Banner */}
-      <div className={`p-4 rounded-lg mb-6 ${
-        isBulkMode 
-          ? 'bg-purple-900 border border-purple-700 text-purple-300'
-          : 'bg-green-900 border border-green-700 text-green-300'
-      }`}>
-        <p className="text-sm">
-          {isBulkMode 
-            ? '📦 Bulk Mode: Scan multiple orders continuously. Scanner stays open until you close it and mark all as delivered.'
-            : '🚚 Single Mode: Scan one order at a time to mark as delivered or not delivered.'
-          }
-        </p>
-      </div>
-
-      {/* Scanner Controls */}
-      {!showQRScanner && (
-        <div className="text-center mb-6">
-          <button
-            onClick={startScanner}
-            className="bg-blue-600 text-white px-8 py-4 rounded-lg hover:bg-blue-700 text-lg font-medium flex items-center space-x-3 mx-auto"
+    <div className="min-h-screen bg-gray-900 text-white p-6">
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            className={`min-w-[300px] p-4 rounded-lg shadow-lg transform transition-all duration-300 ease-in-out ${
+              toast.type === 'error' 
+                ? 'bg-red-600 border-l-4 border-red-800' 
+                : toast.type === 'warning'
+                ? 'bg-yellow-600 border-l-4 border-yellow-800'
+                : 'bg-green-600 border-l-4 border-green-800'
+            }`}
+            style={{
+              animation: 'slideInRight 0.3s ease-out'
+            }}
           >
-            <Camera className="w-6 h-6" />
-            <span>Start QR Scanner</span>
-          </button>
-        </div>
-      )}
-
-      {/* QR Scanner */}
-      {showQRScanner && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-medium text-white flex items-center">
-              <QrCode className="w-5 h-5 mr-2" />
-              {isBulkMode ? 'Bulk QR Scanner' : 'Single QR Scanner'}
-            </h3>
-            <button
-              onClick={stopScanner}
-              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
-            >
-              Close Scanner
-            </button>
+            <div className="flex items-start">
+              <div className="flex-shrink-0 mr-3">
+                {toast.type === 'error' && <XCircle className="w-6 h-6" />}
+                {toast.type === 'warning' && <AlertCircle className="w-6 h-6" />}
+                {toast.type === 'success' && <CheckCircle className="w-6 h-6" />}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-white">{toast.message}</p>
+              </div>
+            </div>
           </div>
+        ))}
+      </div>
 
-          {isBulkMode && (
-            <div className="mb-4 flex items-center justify-between bg-purple-900 bg-opacity-50 p-3 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <Volume2 className="w-5 h-5 text-purple-300" />
-                <span className="text-purple-300">Scanned Orders: {scanCount}</span>
-              </div>
-              <div className="text-purple-300 text-sm">
-                🔊 Listen for beeps: 1 beep = success, 2 beeps = error
-              </div>
+      {/* Header */}
+      <div className="max-w-4xl mx-auto mb-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center space-x-3">
+            <Package2 className="w-8 h-8 text-green-400" />
+            <h1 className="text-3xl font-bold">Delivery Scanner</h1>
+          </div>
+          
+          <div className="flex items-center space-x-4">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isBulkMode}
+                onChange={(e) => {
+                  setIsBulkMode(e.target.checked);
+                  if (!e.target.checked) {
+                    setBulkScannedOrders([]);
+                    setScannedOrderIds(new Set());
+                    setScanCount(0);
+                  }
+                }}
+                className="w-5 h-5 text-green-600 bg-gray-700 border-gray-600 rounded focus:ring-green-500"
+              />
+              <span className="text-sm font-medium">Bulk Mode</span>
+            </label>
+          </div>
+        </div>
+
+        {/* Scanner Control */}
+        <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+          {!showQRScanner ? (
+            <button
+              onClick={startScanner}
+              className="w-full flex items-center justify-center space-x-2 bg-green-600 text-white py-4 px-6 rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Camera className="w-6 h-6" />
+              <span className="text-lg font-medium">
+                {isBulkMode ? 'Start Bulk Scanning' : 'Start Scanner'}
+              </span>
+            </button>
+          ) : (
+            <div className="space-y-4">
+              <QRScanner onScan={handleQRScan} />
+              <button
+                onClick={stopScanner}
+                className="w-full flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700"
+              >
+                <XCircle className="w-5 h-5" />
+                <span>Stop Scanner</span>
+              </button>
             </div>
           )}
-
-          <QRScanner
-            onScan={handleQRScan}
-            onError={(error) => {
-              console.error('QR Scanner error:', error);
-              playErrorBeep();
-            }}
-            isActive={showQRScanner}
-          />
         </div>
-      )}
 
-      {/* Bulk Scanned Orders */}
-      {isBulkMode && bulkScannedOrders.length > 0 && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-          <h3 className="text-lg font-medium text-white mb-4">
-            Scanned Orders ({bulkScannedOrders.length})
-          </h3>
-          <div className="space-y-2 mb-4 max-h-60 overflow-y-auto">
-            {bulkScannedOrders.map((order, index) => (
-              <div key={order.id} className="flex justify-between items-center bg-gray-700 p-3 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <span className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
-                    {index + 1}
-                  </span>
+        {/* Bulk Mode Summary */}
+        {isBulkMode && bulkScannedOrders.length > 0 && (
+          <div className="mt-6 bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold">Scanned Orders ({scanCount})</h3>
+              <button
+                onClick={handleBulkDelivery}
+                disabled={loading}
+                className="flex items-center space-x-2 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                <CheckCircle className="w-5 h-5" />
+                <span>{loading ? 'Processing...' : 'Mark All as Delivered'}</span>
+              </button>
+            </div>
+            
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {bulkScannedOrders.map((order, index) => (
+                <div key={order.id} className="bg-gray-700 rounded-lg p-4 flex items-center justify-between">
                   <div>
-                    <p className="text-white font-medium">{order.orderId}</p>
-                    <p className="text-gray-400 text-sm">{order.customerName}</p>
+                    <p className="font-medium">{order.orderId}</p>
+                    <p className="text-sm text-gray-400">{order.customerName}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">₹{order.totalAmount}</p>
+                    <p className="text-xs text-gray-400">{order.items.length} items</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-white font-medium">₹{order.totalAmount}</p>
-                  <p className="text-gray-400 text-sm">{order.customerPincode}</p>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-          <button
-            onClick={handleBulkDelivery}
-            disabled={loading}
-            className="w-full bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
-          >
-            {loading ? 'Processing...' : `Mark All ${bulkScannedOrders.length} Orders as Delivered`}
-          </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Single Order Details */}
-      {!isBulkMode && currentOrder && (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 space-y-6">
-          <div className="border-b border-gray-700 pb-4">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <h3 className="text-xl font-semibold text-white">{currentOrder.orderId}</h3>
-                <p className="text-sm text-gray-400 mt-1">
-                  Status: <span className="font-medium text-purple-400">Out for Delivery</span>
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-2xl font-bold text-white">₹{currentOrder.totalAmount}</p>
-                <p className="text-sm text-gray-400">COD Amount</p>
-              </div>
-            </div>
+      {!isBulkMode && currentOrder && !showQRScanner && (
+        <div className="max-w-4xl mx-auto bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold">{currentOrder.orderId}</h2>
+            <span className="px-3 py-1 bg-blue-600 text-white rounded-full text-sm">
+              {currentOrder.status.replace(/_/g, ' ')}
+            </span>
           </div>
 
-          {/* Customer & Order Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Customer Details */}
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <h4 className="font-semibold text-white mb-3">Customer Details</h4>
-              <div className="space-y-2 text-sm text-gray-300">
-                <p><strong className="text-gray-400">Name:</strong> {currentOrder.customerName}</p>
-                <p><strong className="text-gray-400">Phone:</strong> {currentOrder.customerPhone}</p>
-                <p><strong className="text-gray-400">Address:</strong> {currentOrder.customerAddress}</p>
-                <p><strong className="text-gray-400">PIN Code:</strong> {currentOrder.customerPincode}</p>
-              </div>
+              <p className="text-sm text-gray-400">Customer</p>
+              <p className="font-medium">{currentOrder.customerName}</p>
             </div>
-
             <div>
-              <h4 className="font-semibold text-white mb-3">Order Details</h4>
-              <div className="space-y-2 text-sm text-gray-300">
-                <p><strong className="text-gray-400">Seller:</strong> {currentOrder.sellerName}</p>
-                <p><strong className="text-gray-400">Items:</strong> {currentOrder.items.length} products</p>
-                <p><strong className="text-gray-400">Payment:</strong> Cash on Delivery</p>
-              </div>
+              <p className="text-sm text-gray-400">Phone</p>
+              <p className="font-medium">{currentOrder.customerPhone}</p>
+            </div>
+            <div className="col-span-2">
+              <p className="text-sm text-gray-400">Address</p>
+              <p className="font-medium">{currentOrder.deliveryAddress}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-400">Total Amount</p>
+              <p className="text-xl font-bold text-green-400">₹{currentOrder.totalAmount}</p>
             </div>
           </div>
 
@@ -789,6 +749,20 @@ const DeliveryScanner: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* CSS Animation for Toast */}
+      <style>{`
+        @keyframes slideInRight {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
     </div>
   );
 };
