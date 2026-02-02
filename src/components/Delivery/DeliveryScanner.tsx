@@ -5,17 +5,16 @@ import { useAuth } from '../../hooks/useAuth';
 import { Order, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
 import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
-import { QrCode, CheckCircle, XCircle, Scan, CreditCard, DollarSign, AlertCircle, Camera, Package2, Printer } from 'lucide-react';
+import { QrCode, CheckCircle, XCircle, Camera, CreditCard, DollarSign, AlertCircle, Package2, Volume2 } from 'lucide-react';
 import QRScanner from './QRScanner';
 
 const DeliveryScanner: React.FC = () => {
   const { user } = useAuth();
-  const [scanMode, setScanMode] = useState<'pickup' | 'delivery'>('pickup');
-  const [scannedOrderId, setScannedOrderId] = useState('');
-  const [bulkOrderIds, setBulkOrderIds] = useState<string[]>(['']);
   const [isBulkMode, setIsBulkMode] = useState(false);
+  const [showQRScanner, setShowQRScanner] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
-  const [bulkOrders, setBulkOrders] = useState<Order[]>([]);
+  const [bulkScannedOrders, setBulkScannedOrders] = useState<Order[]>([]);
+  const [scannedOrderIds, setScannedOrderIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [deliveryReason, setDeliveryReason] = useState('');
   const [showReasonModal, setShowReasonModal] = useState(false);
@@ -24,181 +23,73 @@ const DeliveryScanner: React.FC = () => {
   const [cashAmount, setCashAmount] = useState('');
   const [upiQRCode, setUpiQRCode] = useState('');
   const [transactionId, setTransactionId] = useState('');
-  const [showAssignmentWarning, setShowAssignmentWarning] = useState(false);
   const [sellerUpiId, setSellerUpiId] = useState('');
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [showCamera, setShowCamera] = useState(false);
-  const [retryAttempts, setRetryAttempts] = useState<{[orderId: string]: number}>({});
-  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [scanCount, setScanCount] = useState(0);
 
-  // Cleanup camera stream on unmount
-  useEffect(() => {
-    return () => {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [cameraStream]);
-
-  const startCamera = async () => {
-    try {
-      // First check if camera permission is available
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('Camera access is not supported on this device/browser. Please enter Order ID manually.');
-        return;
-      }
-
-      // Request camera permission explicitly
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment', // Use back camera
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } 
-      });
-      setCameraStream(stream);
-      setShowCamera(true);
-    } catch (error: any) {
-      console.error('Error accessing camera:', error);
-      
-      // Provide specific error messages based on the error type
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        alert('Camera permission was denied. Please allow camera access in your browser settings to use the QR scanner, or enter Order ID manually.');
-      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-        alert('No camera found on this device. Please enter Order ID manually.');
-      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-        alert('Camera is already in use by another application. Please close other apps using the camera or enter Order ID manually.');
-      } else {
-        alert('Unable to access camera. Please check permissions in your browser settings or enter Order ID manually.');
-      }
-    }
-  };
-
-  const stopCamera = () => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
-    setShowCamera(false);
-  };
-
-  const handleQRScan = (result: string) => {
-    setScannedOrderId(result);
-    setShowQRScanner(false);
-    // Auto-scan after QR detection
-    setTimeout(() => {
-      handleScan();
-    }, 100);
-  };
-
-  const handleQRError = (error: string) => {
-    console.error('QR Scanner error:', error);
-    alert(error);
-  };
-
-  const addBulkOrderField = () => {
-    setBulkOrderIds([...bulkOrderIds, '']);
-  };
-
-  const updateBulkOrderField = (index: number, value: string) => {
-    const newIds = [...bulkOrderIds];
-    newIds[index] = value;
-    setBulkOrderIds(newIds);
-  };
-
-  const removeBulkOrderField = (index: number) => {
-    const newIds = bulkOrderIds.filter((_, i) => i !== index);
-    setBulkOrderIds(newIds.length > 0 ? newIds : ['']);
-  };
-
-  const handleBulkScan = async () => {
-    const validOrderIds = bulkOrderIds.filter(id => id.trim() !== '');
-    if (validOrderIds.length === 0) {
-      alert('Please enter at least one Order ID');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const orders: Order[] = [];
-      
-      for (const orderId of validOrderIds) {
-        const q = query(
-          collection(db, 'orders'),
-          where('orderId', '==', orderId.trim())
-        );
-        const snapshot = await getDocs(q);
-        
-        if (!snapshot.empty) {
-          const orderDoc = snapshot.docs[0];
-          const order = {
-            id: orderDoc.id,
-            ...orderDoc.data(),
-            createdAt: orderDoc.data().createdAt?.toDate() || new Date(),
-            updatedAt: orderDoc.data().updatedAt?.toDate() || new Date()
-          } as Order;
-          
-          if (order.status === ORDER_STATUSES.PACKED) {
-            orders.push(order);
-          }
-        }
-      }
-      
-      if (orders.length === 0) {
-        alert('No valid packed orders found');
-        return;
-      }
-      
-      setBulkOrders(orders);
-    } catch (error) {
-      console.error('Error scanning bulk orders:', error);
-      alert('Error scanning orders');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBulkPickup = async () => {
-    if (bulkOrders.length === 0) return;
+  // Audio feedback functions
+  const playSuccessBeep = () => {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
     
-    setLoading(true);
-    try {
-      const batch = writeBatch(db);
-      
-      bulkOrders.forEach(order => {
-        const orderRef = doc(db, 'orders', order.id);
-        batch.update(orderRef, {
-          status: ORDER_STATUSES.OUT_FOR_DELIVERY,
-          deliveryBoyId: user?.id,
-          deliveryBoyName: user?.name,
-          outForDeliveryAt: new Date(),
-          updatedAt: new Date(),
-          assignedDeliveryBoys: [user?.id]
-        });
-      });
-      
-      await batch.commit();
-      
-      alert(`${bulkOrders.length} orders marked as Out for Delivery!`);
-      setBulkOrders([]);
-      setBulkOrderIds(['']);
-      setIsBulkMode(false);
-    } catch (error) {
-      console.error('Error updating bulk orders:', error);
-      alert('Error updating orders');
-    } finally {
-      setLoading(false);
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.frequency.value = 800;
+    oscillator.type = 'sine';
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.2);
+  };
+
+  const playErrorBeep = () => {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    
+    // First beep
+    const oscillator1 = audioContext.createOscillator();
+    const gainNode1 = audioContext.createGain();
+    oscillator1.connect(gainNode1);
+    gainNode1.connect(audioContext.destination);
+    oscillator1.frequency.value = 400;
+    oscillator1.type = 'sine';
+    gainNode1.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode1.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+    oscillator1.start(audioContext.currentTime);
+    oscillator1.stop(audioContext.currentTime + 0.15);
+    
+    // Second beep
+    setTimeout(() => {
+      const oscillator2 = audioContext.createOscillator();
+      const gainNode2 = audioContext.createGain();
+      oscillator2.connect(gainNode2);
+      gainNode2.connect(audioContext.destination);
+      oscillator2.frequency.value = 400;
+      oscillator2.type = 'sine';
+      gainNode2.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      oscillator2.start(audioContext.currentTime);
+      oscillator2.stop(audioContext.currentTime + 0.15);
+    }, 200);
+  };
+
+  const startScanner = () => {
+    setShowQRScanner(true);
+    if (isBulkMode) {
+      setBulkScannedOrders([]);
+      setScannedOrderIds(new Set());
+      setScanCount(0);
     }
   };
 
-  const handleScan = async () => {
-    if (!scannedOrderId.trim()) {
-      alert('Please enter an Order ID');
-      return;
-    }
+  const stopScanner = () => {
+    setShowQRScanner(false);
+    setCurrentOrder(null);
+  };
 
-    setLoading(true);
-    setShowAssignmentWarning(false);
+  const handleQRScan = async (scannedOrderId: string) => {
+    if (!scannedOrderId.trim()) return;
 
     try {
       const q = query(
@@ -208,8 +99,13 @@ const DeliveryScanner: React.FC = () => {
       const snapshot = await getDocs(q);
 
       if (snapshot.empty) {
-        alert('Order not found');
-        setLoading(false);
+        playErrorBeep();
+        if (isBulkMode) {
+          // Show error briefly in bulk mode
+          console.log('Order not found:', scannedOrderId);
+        } else {
+          alert('Order not found');
+        }
         return;
       }
 
@@ -221,72 +117,58 @@ const DeliveryScanner: React.FC = () => {
         updatedAt: orderDoc.data().updatedAt?.toDate() || new Date()
       } as Order;
 
-      // Fetch seller's UPI ID
+      // Check if order is valid for delivery
+      if (order.status !== ORDER_STATUSES.OUT_FOR_DELIVERY) {
+        playErrorBeep();
+        const statusMessage = `Order status: ${order.status.replace('_', ' ')}`;
+        if (isBulkMode) {
+          console.log('Invalid order status:', statusMessage);
+        } else {
+          alert(`Cannot deliver this order. ${statusMessage}`);
+        }
+        return;
+      }
+
+      // Check if delivery boy is assigned
+      if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
+        playErrorBeep();
+        if (isBulkMode) {
+          console.log('Order assigned to another delivery boy');
+        } else {
+          alert('This order is assigned to another delivery boy');
+        }
+        return;
+      }
+
+      // Fetch seller UPI ID
       await fetchSellerUpiId(order.sellerId);
 
-      // Allow delivery boy to pick up ANY packed order or deliver their assigned orders
-      if (scanMode === 'pickup') {
-        if (order.status !== ORDER_STATUSES.PACKED) {
-          alert('This order is not ready for pickup. Status: ' + order.status.replace('_', ' '));
-          setLoading(false);
+      if (isBulkMode) {
+        // Check if already scanned
+        if (scannedOrderIds.has(order.orderId)) {
+          playErrorBeep();
+          console.log('Order already scanned:', order.orderId);
           return;
         }
-        
-        // Check if this delivery boy is permanently assigned to this seller
-        const isAssignedPartner = await checkPermanentAssignment(order.sellerId);
-        
-        if (!isAssignedPartner) {
-          // Show warning if order was assigned to someone else, but allow pickup anyway
-          if (order.assignedDeliveryBoys && 
-              order.assignedDeliveryBoys.length > 0 && 
-              !order.assignedDeliveryBoys.includes(user?.id || '')) {
-            setShowAssignmentWarning(true);
-          }
-        }
-        
-        // Set the order regardless of assignment
+
+        // Add to bulk list
+        setBulkScannedOrders(prev => [...prev, order]);
+        setScannedOrderIds(prev => new Set([...prev, order.orderId]));
+        setScanCount(prev => prev + 1);
+        playSuccessBeep();
+        console.log('Order added to bulk list:', order.orderId);
+      } else {
+        // Single mode - show order details
         setCurrentOrder(order);
-        
-      } else if (scanMode === 'delivery') {
-        if (order.status !== ORDER_STATUSES.OUT_FOR_DELIVERY) {
-          alert('This order is not out for delivery. Status: ' + order.status.replace('_', ' '));
-          setLoading(false);
-          return;
-        }
-        
-        // Only allow delivery if this delivery boy picked it up
-        if (order.deliveryBoyId && order.deliveryBoyId !== user?.id) {
-          alert('This order is assigned to another delivery boy. Only the delivery boy who picked it up can mark it as delivered.');
-          setLoading(false);
-          return;
-        }
-        
-        setCurrentOrder(order);
+        playSuccessBeep();
       }
 
     } catch (error) {
       console.error('Error scanning order:', error);
-      alert('Error scanning order');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const checkPermanentAssignment = async (sellerId: string): Promise<boolean> => {
-    if (!user) return false;
-    
-    try {
-      const q = query(
-        collection(db, 'sellerDeliveryPartners'),
-        where('sellerId', '==', sellerId),
-        where('deliveryBoyId', '==', user.id),
-        where('isActive', '==', true)
-      );
-      const snapshot = await getDocs(q);
-      return !snapshot.empty;
-    } catch (error) {
-      console.error('Error checking permanent assignment:', error);
-      return false;
+      playErrorBeep();
+      if (!isBulkMode) {
+        alert('Error scanning order');
+      }
     }
   };
 
@@ -296,14 +178,8 @@ const DeliveryScanner: React.FC = () => {
       if (sellerDoc.exists()) {
         const sellerData = sellerDoc.data();
         const upiId = sellerData.upiId || '';
-        console.log('Fetched seller UPI ID:', upiId);
         setSellerUpiId(upiId);
-        
-        if (!upiId) {
-          console.warn('Seller does not have UPI ID configured');
-        }
       } else {
-        console.error('Seller document not found');
         setSellerUpiId('');
       }
     } catch (error) {
@@ -312,9 +188,7 @@ const DeliveryScanner: React.FC = () => {
     }
   };
 
-  const updateOrderStatus = async (newStatus: string, reason?: string, paymentData?: any) => {
-    if (!currentOrder) return;
-
+  const updateOrderStatus = async (order: Order, newStatus: string, reason?: string, paymentData?: any) => {
     setLoading(true);
 
     try {
@@ -323,54 +197,40 @@ const DeliveryScanner: React.FC = () => {
         updatedAt: new Date()
       };
 
-      if (newStatus === ORDER_STATUSES.OUT_FOR_DELIVERY) {
-        updateData.deliveryBoyId = user?.id;
-        updateData.deliveryBoyName = user?.name;
-        updateData.outForDeliveryAt = new Date();
-        
-        // Update the assignedDeliveryBoys to include this delivery boy
-        updateData.assignedDeliveryBoys = [user?.id];
-        
-      } else if (newStatus === ORDER_STATUSES.DELIVERED) {
+      if (newStatus === ORDER_STATUSES.DELIVERED) {
         updateData.deliveredAt = new Date();
         if (paymentData) {
           updateData.deliveryPaymentMethod = paymentData.method;
-          if (paymentData.method === 'cash') {
+          if (paymentData.method === 'cash' && paymentData.amount) {
             updateData.cashCollected = paymentData.amount;
-          } else if (paymentData.method === 'upi') {
+          } else if (paymentData.method === 'upi' && paymentData.transactionId) {
             updateData.upiTransactionId = paymentData.transactionId;
           }
         }
       } else if (newStatus === ORDER_STATUSES.NOT_DELIVERED && reason) {
         updateData.deliveryReason = reason;
-        // Increment retry attempts
-        const currentAttempts = retryAttempts[currentOrder.id] || 0;
-        updateData.retryAttempts = currentAttempts + 1;
-        setRetryAttempts(prev => ({
-          ...prev,
-          [currentOrder.id]: currentAttempts + 1
-        }));
+        updateData.retryAttempts = (order.retryAttempts || 0) + 1;
       }
 
-      await updateDoc(doc(db, 'orders', currentOrder.id), updateData);
+      await updateDoc(doc(db, 'orders', order.id), updateData);
       
       // Create delivery record for delivered orders
       if (newStatus === ORDER_STATUSES.DELIVERED && paymentData) {
         const deliveryRecord: any = {
-          orderId: currentOrder.id,
-          orderNumber: currentOrder.orderId,
-          sellerId: currentOrder.sellerId,
-          sellerName: currentOrder.sellerName,
+          orderId: order.id,
+          orderNumber: order.orderId,
+          sellerId: order.sellerId,
+          sellerName: order.sellerName,
           deliveryBoyId: user?.id || '',
           deliveryBoyName: user?.name || '',
           paymentMethod: paymentData.method,
-          amount: currentOrder.totalAmount,
+          amount: order.totalAmount,
           timestamp: new Date(),
-          customerName: currentOrder.customerName,
-          customerAddress: currentOrder.customerAddress
+          customerName: order.customerName,
+          customerAddress: order.customerAddress
         };
         
-        // Only add fields that have values to avoid undefined errors
+        // Only add fields that have values
         if (paymentData.method === 'cash' && paymentData.amount) {
           deliveryRecord.cashCollected = paymentData.amount;
         }
@@ -381,46 +241,138 @@ const DeliveryScanner: React.FC = () => {
         await addDoc(collection(db, 'deliveryRecords'), deliveryRecord);
       }
       
-      alert(`Order ${newStatus.replace('_', ' ')} successfully!`);
-      setCurrentOrder(null);
-      setScannedOrderId('');
-      setDeliveryReason('');
-      setShowReasonModal(false);
-      setShowPaymentModal(false);
-      setShowAssignmentWarning(false);
-      resetPaymentForm();
     } catch (error) {
       console.error('Error updating order status:', error);
-      alert('Error updating order status');
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
-  const retryDelivery = async (order: Order) => {
-    if (!confirm(`Are you sure you want to retry delivery for order ${order.orderId}?`)) return;
+  const handleSingleDelivery = (delivered: boolean) => {
+    if (delivered) {
+      setShowPaymentModal(true);
+    } else {
+      setShowReasonModal(true);
+    }
+  };
+
+  const handlePaymentConfirm = async () => {
+    if (!currentOrder) return;
+
+    if (paymentMethod === 'cash') {
+      const amount = parseFloat(cashAmount);
+      if (!amount || amount <= 0) {
+        alert('Please enter a valid cash amount');
+        return;
+      }
+      try {
+        await updateOrderStatus(currentOrder, ORDER_STATUSES.DELIVERED, undefined, {
+          method: 'cash',
+          amount: amount
+        });
+        alert('Order marked as delivered!');
+        resetSingleMode();
+      } catch (error) {
+        alert('Error updating order status');
+      }
+    } else if (paymentMethod === 'upi') {
+      if (!transactionId.trim()) {
+        alert('Please enter the UPI transaction ID');
+        return;
+      }
+      try {
+        await updateOrderStatus(currentOrder, ORDER_STATUSES.DELIVERED, undefined, {
+          method: 'upi',
+          transactionId: transactionId
+        });
+        alert('Order marked as delivered!');
+        resetSingleMode();
+      } catch (error) {
+        alert('Error updating order status');
+      }
+    }
+  };
+
+  const handleNotDelivered = async () => {
+    if (!currentOrder || !deliveryReason.trim()) {
+      alert('Please provide a reason for non-delivery');
+      return;
+    }
     
+    try {
+      await updateOrderStatus(currentOrder, ORDER_STATUSES.NOT_DELIVERED, deliveryReason);
+      alert('Order marked as not delivered');
+      resetSingleMode();
+    } catch (error) {
+      alert('Error updating order status');
+    }
+  };
+
+  const handleBulkDelivery = async () => {
+    if (bulkScannedOrders.length === 0) {
+      alert('No orders scanned');
+      return;
+    }
+
+    if (!confirm(`Mark all ${bulkScannedOrders.length} orders as delivered?`)) {
+      return;
+    }
+
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'orders', order.id), {
-        status: ORDER_STATUSES.OUT_FOR_DELIVERY,
-        deliveryReason: '',
-        updatedAt: new Date(),
-        retryAt: new Date(),
-        // Keep the same delivery boy assigned
-        deliveryBoyId: user?.id,
-        deliveryBoyName: user?.name
+      const batch = writeBatch(db);
+      const now = new Date();
+      
+      bulkScannedOrders.forEach(order => {
+        const orderRef = doc(db, 'orders', order.id);
+        batch.update(orderRef, {
+          status: ORDER_STATUSES.DELIVERED,
+          deliveredAt: now,
+          deliveryPaymentMethod: 'cash',
+          cashCollected: order.totalAmount,
+          updatedAt: now
+        });
+
+        // Add delivery record
+        const deliveryRecordRef = doc(collection(db, 'deliveryRecords'));
+        batch.set(deliveryRecordRef, {
+          orderId: order.id,
+          orderNumber: order.orderId,
+          sellerId: order.sellerId,
+          sellerName: order.sellerName,
+          deliveryBoyId: user?.id || '',
+          deliveryBoyName: user?.name || '',
+          paymentMethod: 'cash',
+          amount: order.totalAmount,
+          cashCollected: order.totalAmount,
+          timestamp: now,
+          customerName: order.customerName,
+          customerAddress: order.customerAddress
+        });
       });
       
-      alert(`Order ${order.orderId} marked for retry delivery!`);
-      setCurrentOrder(null);
-      setScannedOrderId('');
+      await batch.commit();
+      
+      alert(`${bulkScannedOrders.length} orders marked as delivered!`);
+      setBulkScannedOrders([]);
+      setScannedOrderIds(new Set());
+      setScanCount(0);
+      setShowQRScanner(false);
     } catch (error) {
-      console.error('Error retrying delivery:', error);
-      alert('Error retrying delivery');
+      console.error('Error updating bulk orders:', error);
+      alert('Error updating orders');
     } finally {
       setLoading(false);
     }
+  };
+
+  const resetSingleMode = () => {
+    setCurrentOrder(null);
+    setShowPaymentModal(false);
+    setShowReasonModal(false);
+    setDeliveryReason('');
+    resetPaymentForm();
   };
 
   const resetPaymentForm = () => {
@@ -431,63 +383,14 @@ const DeliveryScanner: React.FC = () => {
     setSellerUpiId('');
   };
 
-  const handleDeliveryAction = (delivered: boolean) => {
-    if (delivered) {
-      setShowPaymentModal(true);
-    } else {
-      setShowReasonModal(true);
-    }
-  };
-
-  const handlePaymentConfirm = () => {
-    if (paymentMethod === 'cash') {
-      const amount = parseFloat(cashAmount);
-      if (!amount || amount <= 0) {
-        alert('Please enter a valid cash amount');
-        return;
-      }
-      updateOrderStatus(ORDER_STATUSES.DELIVERED, undefined, {
-        method: 'cash',
-        amount: amount
-      });
-    } else if (paymentMethod === 'upi') {
-      if (!transactionId.trim()) {
-        alert('Please enter the UPI transaction ID');
-        return;
-      }
-      updateOrderStatus(ORDER_STATUSES.DELIVERED, undefined, {
-        method: 'upi',
-        transactionId: transactionId
-      });
-    }
-  };
-
-  const handleNotDelivered = () => {
-    if (!deliveryReason.trim()) {
-      alert('Please provide a reason for non-delivery');
-      return;
-    }
-    updateOrderStatus(ORDER_STATUSES.NOT_DELIVERED, deliveryReason);
-  };
-
   const generateUPIPayment = () => {
-    if (!currentOrder) return;
+    if (!currentOrder || !sellerUpiId) return;
     
-    // Check if seller has UPI ID
-    if (!sellerUpiId) {
-      alert('Seller UPI ID not available. Please contact the seller.');
-      return;
-    }
-    
-    // Generate UPI payment link in correct format
     const upiString = `upi://pay?pa=${sellerUpiId}&pn=${currentOrder.sellerName}&am=${currentOrder.totalAmount}&cu=INR`;
-
-    // Store the UPI string; we'll generate the QR locally using the installed qrcode-generator
-    console.log('UPI String:', upiString);
     setUpiQRCode(upiString);
   };
 
-  // SVG markup for the generated UPI QR
+  // Generate UPI QR SVG
   const [upiQrSvg, setUpiQrSvg] = useState('');
 
   useEffect(() => {
@@ -500,10 +403,7 @@ const DeliveryScanner: React.FC = () => {
     const generate = async () => {
       try {
         const mod = await import('qrcode-generator');
-        // module may export the factory as default or directly
-        // @ts-ignore
         const qrcodeFactory = mod && mod.default ? mod.default : mod;
-        // create QR with automatic type (0) and error correction L
         const qr = qrcodeFactory(0, 'L');
         qr.addData(upiQRCode);
         qr.make();
@@ -528,238 +428,148 @@ const DeliveryScanner: React.FC = () => {
       <div className="flex space-x-4 mb-6">
         <button
           onClick={() => {
-            setScanMode('pickup');
-            setCurrentOrder(null);
-            setScannedOrderId('');
-            setShowAssignmentWarning(false);
-            setBulkOrders([]);
             setIsBulkMode(false);
-            stopCamera();
+            setShowQRScanner(false);
+            setCurrentOrder(null);
+            setBulkScannedOrders([]);
+            setScannedOrderIds(new Set());
           }}
           className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-            scanMode === 'pickup'
-              ? 'bg-purple-600 text-white'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-        >
-          📦 Pickup Mode
-        </button>
-        <button
-          onClick={() => {
-            setScanMode('delivery');
-            setCurrentOrder(null);
-            setScannedOrderId('');
-            setShowAssignmentWarning(false);
-            setBulkOrders([]);
-            setIsBulkMode(false);
-            stopCamera();
-          }}
-          className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
-            scanMode === 'delivery'
+            !isBulkMode
               ? 'bg-green-600 text-white'
               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
-          🚚 Delivery Mode
+          🚚 Single Delivery Mode
+        </button>
+        <button
+          onClick={() => {
+            setIsBulkMode(true);
+            setShowQRScanner(false);
+            setCurrentOrder(null);
+            setBulkScannedOrders([]);
+            setScannedOrderIds(new Set());
+          }}
+          className={`flex-1 py-3 px-4 rounded-lg font-medium transition-colors ${
+            isBulkMode
+              ? 'bg-purple-600 text-white'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+          }`}
+        >
+          📦 Bulk Delivery Mode
         </button>
       </div>
 
-      {/* Bulk Mode Toggle for Pickup */}
-      {scanMode === 'pickup' && (
-        <div className="flex justify-center mb-4">
-          <button
-            onClick={() => {
-              setIsBulkMode(!isBulkMode);
-              setCurrentOrder(null);
-              setScannedOrderId('');
-              setBulkOrders([]);
-              setBulkOrderIds(['']);
-              stopCamera();
-            }}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              isBulkMode
-                ? 'bg-orange-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-            }`}
-          >
-            <Package2 className="w-4 h-4 inline mr-2" />
-            {isBulkMode ? 'Exit Bulk Mode' : 'Bulk Pickup Mode'}
-          </button>
-        </div>
-      )}
-
       {/* Info Banner */}
       <div className={`p-4 rounded-lg mb-6 ${
-        scanMode === 'pickup' 
+        isBulkMode 
           ? 'bg-purple-900 border border-purple-700 text-purple-300'
           : 'bg-green-900 border border-green-700 text-green-300'
       }`}>
         <p className="text-sm">
-          {scanMode === 'pickup' 
-            ? isBulkMode
-              ? '📦 Bulk Pickup Mode: Enter multiple Order IDs to pick up multiple orders at once.'
-              : '📦 Pickup Mode: Scan any packed order to pick it up for delivery. You can pick up orders from any seller.'
-            : '🚚 Delivery Mode: Scan orders that you have picked up to mark them as delivered or not delivered.'
+          {isBulkMode 
+            ? '📦 Bulk Mode: Scan multiple orders continuously. Scanner stays open until you close it and mark all as delivered.'
+            : '🚚 Single Mode: Scan one order at a time to mark as delivered or not delivered.'
           }
         </p>
       </div>
 
-      {/* Scanner Input - Single or Bulk */}
-      {!isBulkMode ? (
+      {/* Scanner Controls */}
+      {!showQRScanner && (
+        <div className="text-center mb-6">
+          <button
+            onClick={startScanner}
+            className="bg-blue-600 text-white px-8 py-4 rounded-lg hover:bg-blue-700 text-lg font-medium flex items-center space-x-3 mx-auto"
+          >
+            <Camera className="w-6 h-6" />
+            <span>Start QR Scanner</span>
+          </button>
+        </div>
+      )}
+
+      {/* QR Scanner */}
+      {showQRScanner && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-          <h3 className="text-lg font-medium mb-4 text-white flex items-center">
-            <Scan className="w-5 h-5 mr-2" />
-            Scan Order QR Code
-          </h3>
-          
-          <div className="flex space-x-2 mb-4">
-            <input
-              type="text"
-              value={scannedOrderId}
-              onChange={(e) => setScannedOrderId(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleScan()}
-              placeholder="Enter or scan Order ID"
-              className="flex-1 px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-medium text-white flex items-center">
+              <QrCode className="w-5 h-5 mr-2" />
+              {isBulkMode ? 'Bulk QR Scanner' : 'Single QR Scanner'}
+            </h3>
             <button
-              onClick={() => setShowQRScanner(true)}
-              className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+              onClick={stopScanner}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
             >
-              <Camera className="w-5 h-5" />
-              <span>QR Scanner</span>
-            </button>
-            <button
-              onClick={handleScan}
-              disabled={loading}
-              className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center space-x-2"
-            >
-              <QrCode className="w-5 h-5" />
-              <span>{loading ? 'Scanning...' : 'Scan'}</span>
+              Close Scanner
             </button>
           </div>
-          
-          {/* QR Scanner */}
-          {showQRScanner && (
-            <div className="mb-4">
-              <div className="relative">
-                <QRScanner
-                  onScan={handleQRScan}
-                  onError={handleQRError}
-                  isActive={showQRScanner}
-                />
-                <button
-                  onClick={() => setShowQRScanner(false)}
-                  className="absolute top-2 right-2 bg-red-600 text-white px-3 py-1 rounded-lg text-sm"
-                >
-                  Close Scanner
-                </button>
+
+          {isBulkMode && (
+            <div className="mb-4 flex items-center justify-between bg-purple-900 bg-opacity-50 p-3 rounded-lg">
+              <div className="flex items-center space-x-3">
+                <Volume2 className="w-5 h-5 text-purple-300" />
+                <span className="text-purple-300">Scanned Orders: {scanCount}</span>
               </div>
-              <p className="text-gray-400 text-sm mt-2 text-center">
-                Position the QR code within the green square for automatic scanning.
-              </p>
+              <div className="text-purple-300 text-sm">
+                🔊 Listen for beeps: 1 beep = success, 2 beeps = error
+              </div>
             </div>
           )}
+
+          <QRScanner
+            onScan={handleQRScan}
+            onError={(error) => {
+              console.error('QR Scanner error:', error);
+              playErrorBeep();
+            }}
+            isActive={showQRScanner}
+          />
         </div>
-      ) : (
+      )}
+
+      {/* Bulk Scanned Orders */}
+      {isBulkMode && bulkScannedOrders.length > 0 && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
-          <h3 className="text-lg font-medium mb-4 text-white flex items-center">
-            <Package2 className="w-5 h-5 mr-2" />
-            Bulk Order Pickup
+          <h3 className="text-lg font-medium text-white mb-4">
+            Scanned Orders ({bulkScannedOrders.length})
           </h3>
-          
-          <div className="space-y-3 mb-4">
-            {bulkOrderIds.map((orderId, index) => (
-              <div key={index} className="flex space-x-2">
-                <input
-                  type="text"
-                  value={orderId}
-                  onChange={(e) => updateBulkOrderField(index, e.target.value)}
-                  placeholder={`Order ID ${index + 1}`}
-                  className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-                {bulkOrderIds.length > 1 && (
-                  <button
-                    onClick={() => removeBulkOrderField(index)}
-                    className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                  >
-                    Remove
-                  </button>
-                )}
+          <div className="space-y-2 mb-4 max-h-60 overflow-y-auto">
+            {bulkScannedOrders.map((order, index) => (
+              <div key={order.id} className="flex justify-between items-center bg-gray-700 p-3 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <span className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                    {index + 1}
+                  </span>
+                  <div>
+                    <p className="text-white font-medium">{order.orderId}</p>
+                    <p className="text-gray-400 text-sm">{order.customerName}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-white font-medium">₹{order.totalAmount}</p>
+                  <p className="text-gray-400 text-sm">{order.customerPincode}</p>
+                </div>
               </div>
             ))}
           </div>
-          
-          <div className="flex space-x-2 mb-4">
-            <button
-              onClick={addBulkOrderField}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              Add Order ID
-            </button>
-            <button
-              onClick={handleBulkScan}
-              disabled={loading}
-              className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              {loading ? 'Scanning...' : 'Scan All Orders'}
-            </button>
-          </div>
-          
-          {/* Bulk Orders Display */}
-          {bulkOrders.length > 0 && (
-            <div className="bg-gray-700 rounded-lg p-4">
-              <h4 className="text-white font-medium mb-3">Found {bulkOrders.length} Orders Ready for Pickup:</h4>
-              <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
-                {bulkOrders.map((order, index) => (
-                  <div key={order.id} className="flex justify-between items-center text-sm text-gray-300 bg-gray-600 p-2 rounded">
-                    <span>{order.orderId}</span>
-                    <span>{order.customerName}</span>
-                    <span>₹{order.totalAmount}</span>
-                  </div>
-                ))}
-              </div>
-              <button
-                onClick={handleBulkPickup}
-                disabled={loading}
-                className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
-              >
-                {loading ? 'Processing...' : `Mark All ${bulkOrders.length} Orders as Out for Delivery`}
-              </button>
-            </div>
-          )}
+          <button
+            onClick={handleBulkDelivery}
+            disabled={loading}
+            className="w-full bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+          >
+            {loading ? 'Processing...' : `Mark All ${bulkScannedOrders.length} Orders as Delivered`}
+          </button>
         </div>
       )}
 
-      {/* Assignment Warning */}
-      {showAssignmentWarning && currentOrder && (
-        <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 p-4 rounded-lg mb-6">
-          <div className="flex items-start">
-            <AlertCircle className="w-5 h-5 mr-3 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="font-semibold mb-1">⚠️ Assignment Notice</p>
-              <p className="text-sm">
-                This order was originally assigned to another delivery partner. However, you can still pick it up and deliver it.
-                Once you mark it as "Out for Delivery", you will become the assigned delivery partner for this order.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Order Details */}
-      {currentOrder && (
+      {/* Single Order Details */}
+      {!isBulkMode && currentOrder && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 space-y-6">
           <div className="border-b border-gray-700 pb-4">
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h3 className="text-xl font-semibold text-white">{currentOrder.orderId}</h3>
                 <p className="text-sm text-gray-400 mt-1">
-                  Status: <span className={`font-medium ${
-                    currentOrder.status === ORDER_STATUSES.PACKED ? 'text-yellow-400' :
-                    currentOrder.status === ORDER_STATUSES.OUT_FOR_DELIVERY ? 'text-purple-400' :
-                    currentOrder.status === ORDER_STATUSES.DELIVERED ? 'text-green-400' :
-                    'text-red-400'
-                  }`}>{currentOrder.status.replace('_', ' ')}</span>
+                  Status: <span className="font-medium text-purple-400">Out for Delivery</span>
                 </p>
               </div>
               <div className="text-right">
@@ -769,7 +579,7 @@ const DeliveryScanner: React.FC = () => {
             </div>
           </div>
 
-          {/* Customer & Seller Info */}
+          {/* Customer & Order Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <h4 className="font-semibold text-white mb-3">Customer Details</h4>
@@ -782,14 +592,11 @@ const DeliveryScanner: React.FC = () => {
             </div>
 
             <div>
-              <h4 className="font-semibold text-white mb-3">Seller Details</h4>
+              <h4 className="font-semibold text-white mb-3">Order Details</h4>
               <div className="space-y-2 text-sm text-gray-300">
                 <p><strong className="text-gray-400">Seller:</strong> {currentOrder.sellerName}</p>
                 <p><strong className="text-gray-400">Items:</strong> {currentOrder.items.length} products</p>
                 <p><strong className="text-gray-400">Payment:</strong> Cash on Delivery</p>
-                {currentOrder.deliveryBoyName && (
-                  <p><strong className="text-gray-400">Assigned to:</strong> {currentOrder.deliveryBoyName}</p>
-                )}
               </div>
             </div>
           </div>
@@ -811,78 +618,26 @@ const DeliveryScanner: React.FC = () => {
 
           {/* Action Buttons */}
           <div className="flex space-x-3">
-            {scanMode === 'pickup' && currentOrder.status === ORDER_STATUSES.PACKED && (
-              <button
-                onClick={() => updateOrderStatus(ORDER_STATUSES.OUT_FOR_DELIVERY)}
-                disabled={loading}
-                className="flex-1 flex items-center justify-center space-x-2 bg-purple-600 text-white py-3 px-4 rounded-lg hover:bg-purple-700 disabled:opacity-50"
-              >
-                <CheckCircle className="w-5 h-5" />
-                <span>Mark as Out for Delivery</span>
-              </button>
-            )}
-
-            {scanMode === 'delivery' && currentOrder.status === ORDER_STATUSES.OUT_FOR_DELIVERY && (
-              <>
-                <button
-                  onClick={() => {
-                    generateUPIPayment();
-                    handleDeliveryAction(true);
-                  }}
-                  disabled={loading}
-                  className="flex-1 flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
-                >
-                  <CheckCircle className="w-5 h-5" />
-                  <span>Delivered</span>
-                </button>
-                <button
-                  onClick={() => handleDeliveryAction(false)}
-                  disabled={loading}
-                  className="flex-1 flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  <XCircle className="w-5 h-5" />
-                  <span>Not Delivered</span>
-                </button>
-              </>
-            )}
-            
-            {/* Retry button for not delivered orders */}
-            {currentOrder.status === ORDER_STATUSES.NOT_DELIVERED && (
-              <button
-                onClick={() => retryDelivery(currentOrder)}
-                disabled={loading}
-                className="flex-1 flex items-center justify-center space-x-2 bg-orange-600 text-white py-3 px-4 rounded-lg hover:bg-orange-700 disabled:opacity-50"
-              >
-                <CheckCircle className="w-5 h-5" />
-                <span>Retry Delivery</span>
-              </button>
-            )}
+            <button
+              onClick={() => {
+                generateUPIPayment();
+                handleSingleDelivery(true);
+              }}
+              disabled={loading}
+              className="flex-1 flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              <CheckCircle className="w-5 h-5" />
+              <span>Delivered</span>
+            </button>
+            <button
+              onClick={() => handleSingleDelivery(false)}
+              disabled={loading}
+              className="flex-1 flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50"
+            >
+              <XCircle className="w-5 h-5" />
+              <span>Not Delivered</span>
+            </button>
           </div>
-
-          {currentOrder.status === ORDER_STATUSES.DELIVERED && (
-            <div className="mt-4 p-3 bg-green-900 rounded-lg">
-              <p className="text-green-300 text-center">✅ This order has been delivered successfully</p>
-              {currentOrder.deliveryPaymentMethod && (
-                <p className="text-green-300 text-center text-sm mt-1">
-                  Payment: {currentOrder.deliveryPaymentMethod.toUpperCase()}
-                  {currentOrder.cashCollected && ` - ₹${currentOrder.cashCollected} collected`}
-                  {currentOrder.upiTransactionId && ` - TXN: ${currentOrder.upiTransactionId}`}
-                </p>
-              )}
-            </div>
-          )}
-
-          {currentOrder.status === ORDER_STATUSES.NOT_DELIVERED && (
-            <div className="mt-4 p-3 bg-red-900 rounded-lg">
-              <p className="text-red-300 text-center">❌ This order was not delivered</p>
-              {currentOrder.deliveryReason && (
-                <p className="text-red-300 text-sm mt-1">Reason: {currentOrder.deliveryReason}</p>
-              )}
-              {currentOrder.retryAttempts && (
-                <p className="text-red-300 text-sm mt-1">Retry attempts: {currentOrder.retryAttempts}</p>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -936,9 +691,6 @@ const DeliveryScanner: React.FC = () => {
                     step="0.01"
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
                   />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Expected amount: ₹{currentOrder.totalAmount}
-                  </p>
                 </div>
               )}
 
@@ -958,7 +710,6 @@ const DeliveryScanner: React.FC = () => {
                             <p className="text-sm text-red-500">Unable to render QR</p>
                           )}
                           <p className="text-sm text-gray-600 font-semibold">Scan to pay ₹{currentOrder.totalAmount}</p>
-                          <p className="text-xs text-gray-500 mt-1">to {currentOrder.sellerName}</p>
                         </div>
                       )}
                       <div>
@@ -977,7 +728,7 @@ const DeliveryScanner: React.FC = () => {
                   ) : (
                     <div className="bg-red-900 border border-red-700 text-red-300 p-4 rounded-lg text-center">
                       <p className="font-semibold mb-1">⚠️ UPI Not Available</p>
-                      <p className="text-sm">Seller has not configured UPI ID. Please use cash payment or contact the seller.</p>
+                      <p className="text-sm">Seller has not configured UPI ID. Please use cash payment.</p>
                     </div>
                   )}
                 </div>
@@ -994,7 +745,7 @@ const DeliveryScanner: React.FC = () => {
               <button
                 onClick={handlePaymentConfirm}
                 disabled={loading || (paymentMethod === 'upi' && !sellerUpiId)}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
               >
                 {loading ? 'Processing...' : 'Confirm Delivery'}
               </button>
