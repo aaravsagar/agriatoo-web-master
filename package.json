@@ -15,7 +15,6 @@
     "@zxing/library": "^0.21.3",
     "date-fns": "^3.6.0",
     "firebase": "^10.12.2",
-    "html5-qrcode": "^2.3.8",
     "lucide-react": "^0.344.0",
     "qrcode-generator": "^1.4.4",
     "react": "^18.3.1",
