@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, query, where, getDocs, updateDoc, doc, addDoc, getDoc, writeBatch } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
-import { Order, DeliveryRecord } from '../../types';
+import { Order } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
-import { generateUPIQRCode, generateTransactionId } from '../../utils/upiUtils';
-import { QrCode, CheckCircle, XCircle, Camera, CreditCard, DollarSign, AlertCircle, Package2, Volume2 } from 'lucide-react';
+import { Camera, CheckCircle, XCircle, AlertCircle, Package2 } from 'lucide-react';
 import QRScanner from './QRScanner';
+import OrderDetailsModal from './OrderDetailsModal';
 
 interface ToastMessage {
   id: number;
