@@ -5,9 +5,10 @@ interface QRScannerProps {
   onScan: (result: string) => void;
   onError?: (error: string) => void;
   isActive: boolean;
+  manualTrigger?: boolean;
 }
 
-const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive }) => {
+const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive, manualTrigger = false }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [codeReader, setCodeReader] = useState<BrowserMultiFormatReader | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -27,12 +28,12 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive }) => {
   }, [isActive]);
 
   useEffect(() => {
-    if (isActive && codeReader && videoRef.current && !isScanning) {
+    if (!manualTrigger && isActive && codeReader && videoRef.current && !isScanning) {
       startScanning();
     } else if (!isActive && codeReader) {
       stopScanning();
     }
-  }, [isActive, codeReader]);
+  }, [isActive, codeReader, manualTrigger]);
 
   const requestCameraPermission = async () => {
     try {
@@ -149,8 +150,14 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive }) => {
     setIsScanning(false);
   };
 
+  const triggerScan = () => {
+    if (manualTrigger) {
+      startScanning();
+    }
+  };
+
   return (
-    <div className="relative">
+    <div className="relative w-full">
       <video
         ref={videoRef}
         className="w-full h-64 object-cover rounded-lg bg-black"
@@ -186,8 +193,19 @@ const QRScanner: React.FC<QRScannerProps> = ({ onScan, onError, isActive }) => {
       {!isScanning && isActive && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <div className="text-white text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
-            <p className="text-sm">Starting camera...</p>
+            {manualTrigger ? (
+              <button
+                onClick={triggerScan}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors"
+              >
+                📸 Tap to Scan QR Code
+              </button>
+            ) : (
+              <>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
+                <p className="text-sm">Starting camera...</p>
+              </>
+            )}
           </div>
         </div>
       )}

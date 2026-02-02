@@ -33,6 +33,7 @@ const DeliveryScanner: React.FC = () => {
   const [scanCount, setScanCount] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [upiQrSvg, setUpiQrSvg] = useState('');
+  const [useManualTrigger, setUseManualTrigger] = useState(true);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const toastIdCounter = useRef(0);
@@ -131,45 +132,33 @@ const DeliveryScanner: React.FC = () => {
         return;
       }
 
-      // Allow retry for NOT_DELIVERED orders - set them back to OUT_FOR_DELIVERY
-      if (order.status === ORDER_STATUSES.NOT_DELIVERED) {
-        // Update order status to OUT_FOR_DELIVERY for retry
-        await updateDoc(doc(db, 'orders', order.id), {
-          status: ORDER_STATUSES.OUT_FOR_DELIVERY,
-          updatedAt: new Date()
-        });
-        
-        // Update local order object
-        order.status = ORDER_STATUSES.OUT_FOR_DELIVERY;
-        playSuccessBeep();
-        
-        if (isBulkMode) {
-          showToast(`Order ${order.orderId} status updated to Out for Delivery`, 'success');
-        } else {
-          showToast('Order status updated. Ready for delivery retry.', 'success');
-        }
-      }
-
-      // Allow delivery even if order is not ready or not out for delivery
-      // Valid statuses: OUT_FOR_DELIVERY, NOT_READY_FOR_PICKUP
-      const validStatuses = [
-        ORDER_STATUSES.OUT_FOR_DELIVERY,
-        ORDER_STATUSES.NOT_READY_FOR_PICKUP
+      // Allow scanning for: PACKED, RECEIVED, NOT_DELIVERED, OUT_FOR_DELIVERY
+      const scannableStatuses = [
+        ORDER_STATUSES.PACKED,
+        ORDER_STATUSES.RECEIVED,
+        ORDER_STATUSES.NOT_DELIVERED,
+        ORDER_STATUSES.OUT_FOR_DELIVERY
       ];
 
-      if (!validStatuses.includes(order.status)) {
+      if (!scannableStatuses.includes(order.status)) {
         playErrorBeep();
         const statusMessage = `Order status: ${order.status.replace(/_/g, ' ')}`;
         if (isBulkMode) {
           showToast(`Invalid status - ${statusMessage}`, 'error');
         } else {
-          showToast(`Cannot deliver this order. ${statusMessage}`, 'error');
+          showToast(`Cannot process this order. ${statusMessage}`, 'error');
         }
         return;
       }
 
-      // If order is NOT_READY_FOR_PICKUP, update it to OUT_FOR_DELIVERY automatically
-      if (order.status === ORDER_STATUSES.NOT_READY_FOR_PICKUP) {
+      // If order is PACKED, RECEIVED, or NOT_DELIVERED, update it to OUT_FOR_DELIVERY
+      const statusesToUpdate = [
+        ORDER_STATUSES.PACKED,
+        ORDER_STATUSES.RECEIVED,
+        ORDER_STATUSES.NOT_DELIVERED
+      ];
+
+      if (statusesToUpdate.includes(order.status)) {
         await updateDoc(doc(db, 'orders', order.id), {
           status: ORDER_STATUSES.OUT_FOR_DELIVERY,
           deliveryBoyId: user?.id,
@@ -179,6 +168,14 @@ const DeliveryScanner: React.FC = () => {
         // Update local order object
         order.status = ORDER_STATUSES.OUT_FOR_DELIVERY;
         order.deliveryBoyId = user?.id;
+        
+        playSuccessBeep();
+        
+        if (isBulkMode) {
+          showToast(`Order ${order.orderId} marked as Out for Delivery`, 'success');
+        } else {
+          showToast('Order marked as Out for Delivery', 'success');
+        }
       }
 
       // Check if delivery boy is assigned
@@ -207,12 +204,11 @@ const DeliveryScanner: React.FC = () => {
         setBulkScannedOrders(prev => [...prev, order]);
         setScannedOrderIds(prev => new Set([...prev, order.orderId]));
         setScanCount(prev => prev + 1);
-        playSuccessBeep();
+        // Success beep already played above
         // Don't show success toast in bulk mode to avoid interrupting flow
       } else {
         // Single mode - show order details
         setCurrentOrder(order);
-        playSuccessBeep();
       }
 
     } catch (error) {
@@ -493,6 +489,7 @@ const DeliveryScanner: React.FC = () => {
                   playErrorBeep();
                 }}
                 isActive={showQRScanner}
+                manualTrigger={useManualTrigger}
               />
               <button
                 onClick={stopScanner}
