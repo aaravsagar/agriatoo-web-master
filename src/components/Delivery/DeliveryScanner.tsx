@@ -486,7 +486,14 @@ const DeliveryScanner: React.FC = () => {
             </button>
           ) : (
             <div className="space-y-4">
-              <QRScanner onScan={handleQRScan} />
+              <QRScanner
+                onScan={handleQRScan}
+                onError={(error) => {
+                  console.error('QR Scanner error:', error);
+                  playErrorBeep();
+                }}
+                isActive={showQRScanner}
+              />
               <button
                 onClick={stopScanner}
                 className="w-full flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700"
@@ -501,18 +508,7 @@ const DeliveryScanner: React.FC = () => {
         {/* Bulk Mode Summary */}
         {isBulkMode && bulkScannedOrders.length > 0 && (
           <div className="mt-6 bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold">Scanned Orders ({scanCount})</h3>
-              <button
-                onClick={handleBulkDelivery}
-                disabled={loading}
-                className="flex items-center space-x-2 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                <CheckCircle className="w-5 h-5" />
-                <span>{loading ? 'Processing...' : 'Mark All as Delivered'}</span>
-              </button>
-            </div>
-            
+            <h3 className="text-lg font-bold text-white mb-4">Scanned Orders ({scanCount})</h3>
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {bulkScannedOrders.map((order, index) => (
                 <div key={order.id} className="bg-gray-700 rounded-lg p-4 flex items-center justify-between">
@@ -553,7 +549,7 @@ const DeliveryScanner: React.FC = () => {
             </div>
             <div className="col-span-2">
               <p className="text-sm text-gray-400">Address</p>
-              <p className="font-medium">{currentOrder.deliveryAddress}</p>
+              <p className="font-medium">{currentOrder.customerAddress}</p>
             </div>
             <div>
               <p className="text-sm text-gray-400">Total Amount</p>
