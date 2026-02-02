@@ -200,6 +200,9 @@ const DeliveryOrders: React.FC = () => {
                     <div>
                       <h3 className="text-lg font-semibold text-white">{order.orderId}</h3>
                       <p className="text-gray-400 text-sm">{format(order.createdAt, 'PPP')}</p>
+                      {order.retryAttempts && order.retryAttempts > 0 && (
+                        <p className="text-orange-400 text-xs">Retry attempt #{order.retryAttempts}</p>
+                      )}
                     </div>
                   </div>
                   <span className={`px-3 py-1 text-sm font-semibold rounded-full ${getStatusColor(order.status)}`}>
@@ -270,6 +273,9 @@ const DeliveryOrders: React.FC = () => {
                   <div className="text-sm text-gray-400">
                     {order.deliveryReason && (
                       <p><strong>Delivery Note:</strong> {order.deliveryReason}</p>
+                    )}
+                    {order.deliveryPaymentMethod && (
+                      <p><strong>Payment Method:</strong> {order.deliveryPaymentMethod.toUpperCase()}</p>
                     )}
                   </div>
                   

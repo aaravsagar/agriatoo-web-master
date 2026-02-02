@@ -356,7 +356,7 @@ const DeliveryScanner: React.FC = () => {
       
       // Create delivery record for delivered orders
       if (newStatus === ORDER_STATUSES.DELIVERED && paymentData) {
-        const deliveryRecord: Omit<DeliveryRecord, 'id'> = {
+        const deliveryRecord: any = {
           orderId: currentOrder.id,
           orderNumber: currentOrder.orderId,
           sellerId: currentOrder.sellerId,
@@ -365,12 +365,18 @@ const DeliveryScanner: React.FC = () => {
           deliveryBoyName: user?.name || '',
           paymentMethod: paymentData.method,
           amount: currentOrder.totalAmount,
-          cashCollected: paymentData.method === 'cash' ? paymentData.amount : undefined,
-          upiTransactionId: paymentData.method === 'upi' ? paymentData.transactionId : undefined,
           timestamp: new Date(),
           customerName: currentOrder.customerName,
           customerAddress: currentOrder.customerAddress
         };
+        
+        // Only add fields that have values to avoid undefined errors
+        if (paymentData.method === 'cash' && paymentData.amount) {
+          deliveryRecord.cashCollected = paymentData.amount;
+        }
+        if (paymentData.method === 'upi' && paymentData.transactionId) {
+          deliveryRecord.upiTransactionId = paymentData.transactionId;
+        }
         
         await addDoc(collection(db, 'deliveryRecords'), deliveryRecord);
       }
@@ -392,7 +398,7 @@ const DeliveryScanner: React.FC = () => {
   };
 
   const retryDelivery = async (order: Order) => {
-    if (!confirm('Are you sure you want to retry delivery for this order?')) return;
+    if (!confirm(`Are you sure you want to retry delivery for order ${order.orderId}?`)) return;
     
     setLoading(true);
     try {
@@ -400,10 +406,13 @@ const DeliveryScanner: React.FC = () => {
         status: ORDER_STATUSES.OUT_FOR_DELIVERY,
         deliveryReason: '',
         updatedAt: new Date(),
-        retryAt: new Date()
+        retryAt: new Date(),
+        // Keep the same delivery boy assigned
+        deliveryBoyId: user?.id,
+        deliveryBoyName: user?.name
       });
       
-      alert('Order marked for retry delivery!');
+      alert(`Order ${order.orderId} marked for retry delivery!`);
       setCurrentOrder(null);
       setScannedOrderId('');
     } catch (error) {
@@ -836,11 +845,30 @@ const DeliveryScanner: React.FC = () => {
                 </button>
               </>
             )}
+            
+            {/* Retry button for not delivered orders */}
+            {currentOrder.status === ORDER_STATUSES.NOT_DELIVERED && (
+              <button
+                onClick={() => retryDelivery(currentOrder)}
+                disabled={loading}
+                className="flex-1 flex items-center justify-center space-x-2 bg-orange-600 text-white py-3 px-4 rounded-lg hover:bg-orange-700 disabled:opacity-50"
+              >
+                <CheckCircle className="w-5 h-5" />
+                <span>Retry Delivery</span>
+              </button>
+            )}
           </div>
 
           {currentOrder.status === ORDER_STATUSES.DELIVERED && (
             <div className="mt-4 p-3 bg-green-900 rounded-lg">
               <p className="text-green-300 text-center">✅ This order has been delivered successfully</p>
+              {currentOrder.deliveryPaymentMethod && (
+                <p className="text-green-300 text-center text-sm mt-1">
+                  Payment: {currentOrder.deliveryPaymentMethod.toUpperCase()}
+                  {currentOrder.cashCollected && ` - ₹${currentOrder.cashCollected} collected`}
+                  {currentOrder.upiTransactionId && ` - TXN: ${currentOrder.upiTransactionId}`}
+                </p>
+              )}
             </div>
           )}
 
@@ -850,15 +878,9 @@ const DeliveryScanner: React.FC = () => {
               {currentOrder.deliveryReason && (
                 <p className="text-red-300 text-sm mt-1">Reason: {currentOrder.deliveryReason}</p>
               )}
-              <div className="mt-3 text-center">
-                <button
-                  onClick={() => retryDelivery(currentOrder)}
-                  disabled={loading}
-                  className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50"
-                >
-                  Retry Delivery
-                </button>
-              </div>
+              {currentOrder.retryAttempts && (
+                <p className="text-red-300 text-sm mt-1">Retry attempts: {currentOrder.retryAttempts}</p>
+              )}
             </div>
           )}
         </div>
@@ -910,8 +932,13 @@ const DeliveryScanner: React.FC = () => {
                     value={cashAmount}
                     onChange={(e) => setCashAmount(e.target.value)}
                     placeholder={currentOrder.totalAmount.toString()}
+                    min="0"
+                    step="0.01"
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
                   />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Expected amount: ₹{currentOrder.totalAmount}
+                  </p>
                 </div>
               )}
 
