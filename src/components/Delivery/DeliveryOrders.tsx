@@ -309,6 +309,26 @@ const DeliveryOrders: React.FC = () => {
       )}
     </div>
   );
+
+  const retryDelivery = async (order: Order) => {
+    if (!confirm(`Retry delivery for order ${order.orderId}?`)) return;
+    
+    try {
+      await updateDoc(doc(db, 'orders', order.id), {
+        status: ORDER_STATUSES.OUT_FOR_DELIVERY,
+        deliveryReason: '',
+        updatedAt: new Date(),
+        retryAt: new Date()
+      });
+      
+      alert(`Order ${order.orderId} is ready for retry delivery!`);
+      // Refresh the orders list
+      window.location.reload();
+    } catch (error) {
+      console.error('Error retrying delivery:', error);
+      alert('Error retrying delivery');
+    }
+  };
 };
 
 export default DeliveryOrders;
