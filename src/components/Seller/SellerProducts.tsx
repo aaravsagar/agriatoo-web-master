@@ -2,17 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, orderBy, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
+import { useStockManager } from '../../hooks/useStockManager';
 import { Product } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../config/constants';
 import { generateCoveredPincodes, isPincodeValid } from '../../utils/pincodeUtils';
-import { Plus, CreditCard as Edit, Trash2, Package } from 'lucide-react';
+import { Plus, CreditCard as Edit, Trash2, Package, AlertTriangle, RefreshCw } from 'lucide-react';
 
 const SellerProducts: React.FC = () => {
   const { user } = useAuth();
+  const { subscribeToProductStock, updateStock, lowStockAlerts, dismissLowStockAlert } = useStockManager();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [showRestockModal, setShowRestockModal] = useState(false);
+  const [restockProduct, setRestockProduct] = useState<Product | null>(null);
+  const [restockQuantity, setRestockQuantity] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -28,6 +33,22 @@ const SellerProducts: React.FC = () => {
       fetchProducts();
     }
   }, [user]);
+
+  // Subscribe to real-time stock updates for seller's products
+  useEffect(() => {
+    if (products.length > 0) {
+      const productIds = products.map(p => p.id);
+      const unsubscribe = subscribeToProductStock(productIds, (stockMap) => {
+        setProducts(prevProducts => 
+          prevProducts.map(product => ({
+            ...product,
+            stock: stockMap.get(product.id) ?? product.stock
+          }))
+        );
+      });
+      return unsubscribe;
+    }
+  }, [products.map(p => p.id).join(','), subscribeToProductStock]);
 
   const fetchProducts = async () => {
     if (!user) return;
@@ -211,6 +232,27 @@ const SellerProducts: React.FC = () => {
     setEditingProduct(null);
   };
 
+  const handleRestock = async () => {
+    if (!restockProduct || !restockQuantity) return;
+    
+    const newStock = parseInt(restockQuantity);
+    if (isNaN(newStock) || newStock < 0) {
+      alert('Please enter a valid stock quantity');
+      return;
+    }
+
+    const success = await updateStock(restockProduct.id, newStock);
+    if (success) {
+      setShowRestockModal(false);
+      setRestockProduct(null);
+      setRestockQuantity('');
+      dismissLowStockAlert(restockProduct.id);
+      alert(`Stock updated successfully! ${restockProduct.name} now has ${newStock} units.`);
+    } else {
+      alert('Failed to update stock. Please try again.');
+    }
+  };
+
   const addImageField = () => {
     setFormData({
       ...formData,
@@ -237,6 +279,97 @@ const SellerProducts: React.FC = () => {
 
   return (
     <div>
+      {/* Low Stock Alerts */}
+      {lowStockAlerts.length > 0 && (
+        <div className="mb-6 bg-orange-900 border border-orange-700 rounded-lg p-4">
+          <h3 className="text-lg font-semibold text-orange-300 mb-3 flex items-center">
+            <AlertTriangle className="w-5 h-5 mr-2" />
+            Low Stock Alerts ({lowStockAlerts.length})
+          </h3>
+          <div className="space-y-2">
+            {lowStockAlerts.map(alert => (
+              <div key={alert.productId} className="flex items-center justify-between bg-orange-800 bg-opacity-50 rounded-lg p-3">
+                <div>
+                  <p className="text-orange-200 font-medium">{alert.productName}</p>
+                  <p className="text-orange-300 text-sm">
+                    Only {alert.currentStock} units left (threshold: {alert.threshold})
+                  </p>
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => {
+                      const product = products.find(p => p.id === alert.productId);
+                      if (product) {
+                        setRestockProduct(product);
+                        setRestockQuantity(product.stock.toString());
+                        setShowRestockModal(true);
+                      }
+                    }}
+                    className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 flex items-center space-x-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Restock</span>
+                  </button>
+                  <button
+                    onClick={() => dismissLowStockAlert(alert.productId)}
+                    className="bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Restock Modal */}
+      {showRestockModal && restockProduct && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700">
+            <h3 className="text-lg font-medium mb-4 text-white">Update Stock</h3>
+            
+            <div className="mb-4">
+              <p className="text-gray-300 mb-2">Product: <strong>{restockProduct.name}</strong></p>
+              <p className="text-gray-400 text-sm">Current Stock: {restockProduct.stock} {restockProduct.unit}</p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                New Stock Quantity
+              </label>
+              <input
+                type="number"
+                value={restockQuantity}
+                onChange={(e) => setRestockQuantity(e.target.value)}
+                min="0"
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                placeholder="Enter new stock quantity"
+              />
+            </div>
+
+            <div className="flex space-x-2">
+              <button
+                onClick={() => {
+                  setShowRestockModal(false);
+                  setRestockProduct(null);
+                  setRestockQuantity('');
+                }}
+                className="flex-1 px-4 py-2 border border-gray-600 text-gray-300 rounded-md hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRestock}
+                disabled={!restockQuantity || parseInt(restockQuantity) < 0}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                Update Stock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-white">My Products</h2>
         <button
@@ -298,6 +431,22 @@ const SellerProducts: React.FC = () => {
                   </div>
                 </div>
                 
+                {/* Stock status indicators */}
+                <div className="mb-3">
+                  {product.stock === 0 && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900 text-red-300 mr-2">
+                      <AlertTriangle className="w-3 h-3 mr-1" />
+                      Out of Stock
+                    </span>
+                  )}
+                  {product.stock > 0 && product.stock <= 5 && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-900 text-orange-300 mr-2">
+                      <AlertTriangle className="w-3 h-3 mr-1" />
+                      Low Stock
+                    </span>
+                  )}
+                </div>
+                
                 <div className="flex items-center justify-between">
                   <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
                     product.isActive 
@@ -308,6 +457,17 @@ const SellerProducts: React.FC = () => {
                   </span>
                   
                   <div className="flex space-x-2">
+                    <button
+                      onClick={() => {
+                        setRestockProduct(product);
+                        setRestockQuantity(product.stock.toString());
+                        setShowRestockModal(true);
+                      }}
+                      className="text-green-400 hover:text-green-300"
+                      title="Update Stock"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => openModal(product)}
                       className="text-blue-400 hover:text-blue-300"

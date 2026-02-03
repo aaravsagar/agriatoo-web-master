@@ -6,6 +6,7 @@ import { Product } from '../../types';
 import { PRODUCT_CATEGORIES } from '../../config/constants';
 import { Search, ShoppingCart, Truck, Shield, Users } from 'lucide-react';
 import { useCart } from '../../hooks/useCart';
+import { useStockManager } from '../../hooks/useStockManager';
 import ProductCard from '../../components/Customer/ProductCard';
 
 const HomePage: React.FC = () => {
@@ -17,11 +18,30 @@ const HomePage: React.FC = () => {
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState('');
   const { addToCart, totalItems } = useCart();
+  const { subscribeToProductStock, isProductInStock, getProductStock } = useStockManager();
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchProducts();
   }, [selectedCategory, pincode]);
+
+  // Subscribe to real-time stock updates for displayed products
+  useEffect(() => {
+    if (products.length > 0) {
+      const productIds = products.map(p => p.id);
+      const unsubscribe = subscribeToProductStock(productIds, (stockMap) => {
+        // Update products with real-time stock
+        setProducts(prevProducts => 
+          prevProducts.map(product => ({
+            ...product,
+            stock: stockMap.get(product.id) ?? product.stock
+          }))
+        );
+      });
+
+      return unsubscribe;
+    }
+  }, [products.map(p => p.id).join(','), subscribeToProductStock]);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -88,6 +108,14 @@ const HomePage: React.FC = () => {
     if (!product || !product.id) {
       console.error('Invalid product:', product);
       setNotificationMessage('Invalid product data');
+      setShowNotification(true);
+      setTimeout(() => setShowNotification(false), 3000);
+      return;
+    }
+
+    // Check real-time stock availability
+    if (!isProductInStock(product.id, 1)) {
+      setNotificationMessage(`${product.name} is currently out of stock`);
       setShowNotification(true);
       setTimeout(() => setShowNotification(false), 3000);
       return;

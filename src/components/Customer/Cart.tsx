@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useCart } from '../../hooks/useCart';
+import { useStockManager } from '../../hooks/useStockManager';
 import { generateUniqueOrderId, generateOrderQR } from '../../utils/qrUtils';
 import { isPincodeValid } from '../../utils/pincodeUtils';
 import { Plus, Minus, Trash2, ArrowLeft } from 'lucide-react';
@@ -10,6 +11,7 @@ import { ORDER_STATUSES } from '../../config/constants';
 
 const Cart: React.FC = () => {
   const { cartItems, updateQuantity, removeFromCart, clearCart, totalAmount, isInitialized } = useCart();
+  const { reduceStockForOrder, isProductInStock } = useStockManager();
   const navigate = useNavigate();
   
   const [customerDetails, setCustomerDetails] = useState({
@@ -44,6 +46,13 @@ const Cart: React.FC = () => {
     if (!customerDetails.address.trim()) return 'Address is required';
     if (!customerDetails.pincode.trim()) return 'PIN code is required';
     if (!isPincodeValid(customerDetails.pincode)) return 'Invalid PIN code';
+    
+    // Check stock availability for all items
+    for (const item of cartItems) {
+      if (!isProductInStock(item.productId, item.quantity)) {
+        return `${item.product.name} is out of stock or insufficient quantity available`;
+      }
+    }
     
     // Validate pincode serviceability for each seller
     const sellers = [...new Set(cartItems.map(item => item.product.sellerId))];
@@ -90,7 +99,7 @@ const Cart: React.FC = () => {
         return groups;
       }, {} as Record<string, typeof cartItems>);
 
-      // Create separate orders for each seller
+      // Create separate orders for each seller and reduce stock
       const orderPromises = Object.entries(sellerGroups).map(async ([sellerId, items]) => {
         const sellerProduct = items[0].product;
         const orderId = generateUniqueOrderId(customerDetails.pincode);
@@ -121,7 +130,16 @@ const Cart: React.FC = () => {
           qrCode: generateOrderQR(orderId) // Generate QR code for the order
         };
 
-        return addDoc(collection(db, 'orders'), orderData);
+        // Create order and reduce stock atomically
+        const orderRef = await addDoc(collection(db, 'orders'), orderData);
+        
+        // Reduce stock for this order's items
+        const stockReduced = await reduceStockForOrder(items, orderId);
+        if (!stockReduced) {
+          console.warn(`Failed to reduce stock for order ${orderId}`);
+        }
+        
+        return orderRef;
       });
 
       await Promise.all(orderPromises);
@@ -236,7 +254,7 @@ const Cart: React.FC = () => {
                     <button
                       onClick={() => handleQuantityChange(item.productId, 1)}
                       className="p-1 rounded-full bg-gray-100 hover:bg-gray-200"
-                      disabled={item.quantity >= item.product.stock}
+                      disabled={item.quantity >= item.product.stock || !isProductInStock(item.productId, item.quantity + 1)}
                     >
                       <Plus className="w-4 h-4" />
                     </button>
