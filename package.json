@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
+    "@types/node": "^25.2.0",
     "@zxing/library": "^0.21.3",
     "date-fns": "^3.6.0",
     "firebase": "^10.12.2",
