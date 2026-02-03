@@ -60,6 +60,8 @@ export interface Order {
   items: OrderItem[];
   totalAmount: number;
   status: 'received' | 'packed' | 'out_for_delivery' | 'delivered' | 'not_delivered';
+  cancelledAt?: Date;
+  cancelledBy?: string;
   paymentMethod: 'cod';
   deliveryPaymentMethod?: 'cash' | 'upi';
   cashCollected?: number;

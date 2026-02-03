@@ -1,42 +1,68 @@
-import React, { useState } from 'react';
-import { updateDoc, doc, addDoc, collection } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
+import { updateDoc, doc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { Order, User, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
-import { generateUPIQRCode } from '../../utils/upiUtils';
-import { CheckCircle, XCircle, Phone, MapPin, Package, DollarSign, CreditCard, ArrowRight } from 'lucide-react';
+import { CheckCircle, XCircle, Phone, MapPin, Package, DollarSign, CreditCard, ArrowRight, RotateCcw, Truck } from 'lucide-react';
+import QRCode from 'qrcode';
 
 interface OrderDetailsModalProps {
   order: Order;
   onClose: () => void;
   user: User | null;
+  onOrderUpdate?: () => void;
 }
 
-const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, user }) => {
+const NOT_DELIVERED_REASONS = [
+  'Customer not available',
+  'Wrong address',
+  'Customer refused delivery',
+  'Payment issue',
+  'Address not accessible',
+  'Customer requested reschedule',
+  'Other'
+];
+
+const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, user, onOrderUpdate }) => {
   const [loading, setLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [deliveryReason, setDeliveryReason] = useState('');
+  const [selectedReason, setSelectedReason] = useState('');
+  const [customReason, setCustomReason] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi'>('cash');
   const [cashAmount, setCashAmount] = useState('');
   const [transactionId, setTransactionId] = useState('');
-  const [sliderValue, setSliderValue] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
   const [upiQRCode, setUpiQRCode] = useState<string>('');
+  const [sellerUpiId, setSellerUpiId] = useState<string>('');
 
-  // Generate UPI QR code when UPI payment is selected
-  React.useEffect(() => {
-    if (paymentMethod === 'upi' && user?.upiId) {
-      const upiData = {
-        upiId: user.upiId,
-        amount: order.totalAmount,
-        transactionNote: `Payment for order ${order.orderId}`,
-        merchantName: user.name || 'Delivery Partner'
-      };
-      const upiUrl = generateUPIQRCode(upiData);
-      setUpiQRCode(upiUrl);
-    }
-  }, [paymentMethod, user, order]);
+  // Fetch seller UPI ID when UPI payment is selected
+  useEffect(() => {
+    const fetchSellerUpiId = async () => {
+      if (paymentMethod === 'upi' && order.sellerId) {
+        try {
+          const sellerDoc = await getDoc(doc(db, 'users', order.sellerId));
+          if (sellerDoc.exists()) {
+            const sellerData = sellerDoc.data();
+            const upiId = sellerData.upiId || '';
+            setSellerUpiId(upiId);
+            
+            if (upiId) {
+              // Generate UPI QR code
+              const upiUrl = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(order.sellerName)}&am=${order.totalAmount}&tn=${encodeURIComponent(`Payment for order ${order.orderId}`)}&cu=INR`;
+              const qrCodeDataUrl = await QRCode.toDataURL(upiUrl, { width: 200 });
+              setUpiQRCode(qrCodeDataUrl);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching seller UPI ID:', error);
+        }
+      }
+    };
+
+    fetchSellerUpiId();
+  }, [paymentMethod, order.sellerId, order.sellerName, order.totalAmount, order.orderId]);
+
   const updateOrderStatus = async (newStatus: string, reason?: string, paymentData?: any) => {
     setLoading(true);
 
@@ -87,7 +113,7 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
         ...(paymentData && { paymentData })
       } as DeliveryRecord);
 
-      // Update local order state to reflect changes
+      // Update local order state
       order.status = newStatus;
       if (newStatus === ORDER_STATUSES.DELIVERED) {
         order.deliveredAt = new Date();
@@ -96,22 +122,17 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
         order.notDeliveredAt = new Date();
       }
 
+      if (onOrderUpdate) {
+        onOrderUpdate();
+      }
+
       onClose();
 
     } catch (error) {
       console.error('Error updating order:', error);
-      // Don't show alert, just log error and close modal
       onClose();
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSliderComplete = () => {
-    if (sliderValue >= 90) {
-      updateOrderStatus(ORDER_STATUSES.OUT_FOR_DELIVERY);
-    } else {
-      setSliderValue(0);
     }
   };
 
@@ -128,17 +149,22 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
   };
 
   const handleNotDelivered = async () => {
-    if (!deliveryReason.trim()) {
+    const finalReason = selectedReason === 'Other' ? customReason : selectedReason;
+    if (!finalReason.trim()) {
       return;
     }
 
-    await updateOrderStatus(ORDER_STATUSES.NOT_DELIVERED, deliveryReason);
+    await updateOrderStatus(ORDER_STATUSES.NOT_DELIVERED, finalReason);
+  };
+
+  const handleTryAgain = async () => {
+    await updateOrderStatus(ORDER_STATUSES.OUT_FOR_DELIVERY);
   };
 
   const isDelivered = order.status === ORDER_STATUSES.DELIVERED;
   const isNotDelivered = order.status === ORDER_STATUSES.NOT_DELIVERED;
   const isOutForDelivery = order.status === ORDER_STATUSES.OUT_FOR_DELIVERY;
-  const needsSlider = order.status === ORDER_STATUSES.PACKED || order.status === ORDER_STATUSES.RECEIVED;
+  const isPackedOrReceived = order.status === ORDER_STATUSES.PACKED || order.status === ORDER_STATUSES.RECEIVED;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -233,99 +259,89 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
               <p className="text-red-200">{order.notDeliveredReason}</p>
             </div>
           )}
-          {/* Action Section */}
-          {!isDelivered && !isNotDelivered && (
-            <div className="bg-gray-700 rounded-lg p-4">
-              {needsSlider && (
-                <div>
-                  <h3 className="text-lg font-semibold text-white mb-4">Mark as Out for Delivery</h3>
-                  <div className="relative">
-                    <div className="w-full h-12 bg-gray-600 rounded-full relative overflow-hidden">
-                      <div 
-                        className="h-full bg-green-600 rounded-full transition-all duration-200"
-                        style={{ width: `${sliderValue}%` }}
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-white font-medium">
-                          {sliderValue < 90 ? 'Swipe right to confirm pickup' : 'Release to confirm'}
-                        </span>
-                      </div>
-                      <div
-                        className="absolute top-1 left-1 w-10 h-10 bg-white rounded-full cursor-pointer flex items-center justify-center shadow-lg"
-                        style={{ 
-                          left: `${Math.min(sliderValue, 85)}%`,
-                          transform: 'translateX(-50%)'
-                        }}
-                        onMouseDown={() => setIsDragging(true)}
-                        onMouseUp={() => {
-                          setIsDragging(false);
-                          handleSliderComplete();
-                        }}
-                        onMouseMove={(e) => {
-                          if (isDragging) {
-                            const rect = e.currentTarget.parentElement?.getBoundingClientRect();
-                            if (rect) {
-                              const x = e.clientX - rect.left;
-                              const percentage = Math.min(Math.max((x / rect.width) * 100, 0), 100);
-                              setSliderValue(percentage);
-                            }
-                          }
-                        }}
-                      >
-                        <ArrowRight className="w-5 h-5 text-gray-600" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
-              {isOutForDelivery && (
-                <div className="space-y-4">
-                  {/* UPI QR Code Display */}
-                  {upiQRCode && (
-                    <div className="text-center">
-                      <p className="text-sm text-gray-300 mb-2">Show this QR code to customer:</p>
-                      <div className="bg-white p-4 rounded-lg inline-block">
-                        <img 
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(upiQRCode)}`}
-                          alt="UPI QR Code"
-                          className="w-48 h-48"
-                        />
-                      </div>
-                      <p className="text-xs text-gray-400 mt-2">Amount: ₹{order.totalAmount}</p>
-                    </div>
-                  )}
-                  
-                  <h3 className="text-lg font-semibold text-white">Delivery Actions</h3>
-                  <div className="flex space-x-3">
-                    <button
-                      onClick={() => setShowPaymentModal(true)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
-                    >
-                      <CheckCircle className="w-5 h-5" />
-                      <span>Mark as Delivered</span>
-                    </button>
-                    <button
-                      onClick={() => setShowReasonModal(true)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50"
-                    >
-                      <XCircle className="w-5 h-5" />
-                      <span>Not Delivered</span>
-                    </button>
-                  </div>
+          {/* Action Section */}
+          <div className="bg-gray-700 rounded-lg p-4">
+            {/* Packed/Received Orders - Manual Action Selection */}
+            {isPackedOrReceived && (
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white">Choose Action</h3>
+                <div className="grid grid-cols-1 gap-3">
+                  <button
+                    onClick={() => updateOrderStatus(ORDER_STATUSES.OUT_FOR_DELIVERY)}
+                    disabled={loading}
+                    className="flex items-center justify-center space-x-2 bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    <Truck className="w-5 h-5" />
+                    <span>Mark as Out for Delivery</span>
+                  </button>
+                  <button
+                    onClick={() => setShowPaymentModal(true)}
+                    disabled={loading}
+                    className="flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  >
+                    <CheckCircle className="w-5 h-5" />
+                    <span>Mark as Delivered</span>
+                  </button>
+                  <button
+                    onClick={() => setShowReasonModal(true)}
+                    disabled={loading}
+                    className="flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50"
+                  >
+                    <XCircle className="w-5 h-5" />
+                    <span>Mark as Not Delivered</span>
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+
+            {/* Out for Delivery Orders */}
+            {isOutForDelivery && (
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white">Delivery Actions</h3>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => setShowPaymentModal(true)}
+                    disabled={loading}
+                    className="flex-1 flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  >
+                    <CheckCircle className="w-5 h-5" />
+                    <span>Mark as Delivered</span>
+                  </button>
+                  <button
+                    onClick={() => setShowReasonModal(true)}
+                    disabled={loading}
+                    className="flex-1 flex items-center justify-center space-x-2 bg-red-600 text-white py-3 px-4 rounded-lg hover:bg-red-700 disabled:opacity-50"
+                  >
+                    <XCircle className="w-5 h-5" />
+                    <span>Not Delivered</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Not Delivered Orders - Try Again */}
+            {isNotDelivered && (
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white">Retry Delivery</h3>
+                <button
+                  onClick={handleTryAgain}
+                  disabled={loading}
+                  className="w-full flex items-center justify-center space-x-2 bg-yellow-600 text-white py-3 px-4 rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                  <span>Try Again</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Payment Modal */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-60">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700 m-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700 m-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-medium mb-4 text-white">Payment Collection</h3>
             <p className="text-gray-300 mb-4">Order Amount: ₹{order.totalAmount}</p>
             
@@ -373,17 +389,41 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
               )}
 
               {paymentMethod === 'upi' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    UPI Transaction ID
-                  </label>
-                  <input
-                    type="text"
-                    value={transactionId}
-                    onChange={(e) => setTransactionId(e.target.value)}
-                    placeholder="Enter transaction ID after payment"
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
+                <div className="space-y-4">
+                  {sellerUpiId ? (
+                    <>
+                      {upiQRCode && (
+                        <div className="text-center">
+                          <p className="text-sm text-gray-300 mb-2">Show this QR code to customer:</p>
+                          <div className="bg-white p-4 rounded-lg inline-block">
+                            <img 
+                              src={upiQRCode}
+                              alt="UPI QR Code"
+                              className="w-48 h-48"
+                            />
+                          </div>
+                          <p className="text-xs text-gray-400 mt-2">Amount: ₹{order.totalAmount}</p>
+                          <p className="text-xs text-gray-400">Pay to: {sellerUpiId}</p>
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                          UPI Transaction ID
+                        </label>
+                        <input
+                          type="text"
+                          value={transactionId}
+                          onChange={(e) => setTransactionId(e.target.value)}
+                          placeholder="Enter transaction ID after payment"
+                          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 p-3 rounded-lg text-sm">
+                      <p>Seller has not set up UPI ID. Please collect cash payment instead.</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -397,7 +437,7 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
               </button>
               <button
                 onClick={handlePaymentConfirm}
-                disabled={loading}
+                disabled={loading || (paymentMethod === 'upi' && !sellerUpiId)}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
               >
                 {loading ? 'Processing...' : 'Confirm Delivery'}
@@ -413,19 +453,38 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
           <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-gray-700 m-4">
             <h3 className="text-lg font-medium mb-4 text-white">Reason for Non-Delivery</h3>
             
-            <textarea
-              placeholder="Please provide a reason why the order could not be delivered..."
-              value={deliveryReason}
-              onChange={(e) => setDeliveryReason(e.target.value)}
-              rows={4}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 mb-4"
-            />
+            <div className="space-y-3 mb-4">
+              {NOT_DELIVERED_REASONS.map((reason) => (
+                <label key={reason} className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="deliveryReason"
+                    value={reason}
+                    checked={selectedReason === reason}
+                    onChange={(e) => setSelectedReason(e.target.value)}
+                    className="w-4 h-4 text-red-600 bg-gray-700 border-gray-600 focus:ring-red-500"
+                  />
+                  <span className="text-gray-300">{reason}</span>
+                </label>
+              ))}
+            </div>
+
+            {selectedReason === 'Other' && (
+              <textarea
+                placeholder="Please specify the reason..."
+                value={customReason}
+                onChange={(e) => setCustomReason(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 mb-4"
+              />
+            )}
 
             <div className="flex space-x-2">
               <button
                 onClick={() => {
                   setShowReasonModal(false);
-                  setDeliveryReason('');
+                  setSelectedReason('');
+                  setCustomReason('');
                 }}
                 className="flex-1 px-4 py-2 border border-gray-600 text-gray-300 rounded-md hover:bg-gray-700"
               >
@@ -433,7 +492,7 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose, u
               </button>
               <button
                 onClick={handleNotDelivered}
-                disabled={loading || !deliveryReason.trim()}
+                disabled={loading || !selectedReason || (selectedReason === 'Other' && !customReason.trim())}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
               >
                 {loading ? 'Updating...' : 'Confirm'}

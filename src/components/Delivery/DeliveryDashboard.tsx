@@ -29,10 +29,9 @@ const DeliveryDashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      // Show only orders that are "Out for Delivery" and assigned to this delivery boy
+      // Show only orders that are "Out for Delivery"
       const q = query(
         collection(db, 'orders'),
-        where('deliveryBoyId', '==', user?.id || ''),
         where('status', '==', ORDER_STATUSES.OUT_FOR_DELIVERY)
       );
       const snapshot = await getDocs(q);
@@ -45,6 +44,9 @@ const DeliveryDashboard: React.FC = () => {
 
       // Frontend sorting by creation date (newest first)
       orders.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      
+      // Filter for this delivery boy's orders
+      orders = orders.filter(order => order.deliveryBoyId === user?.id);
       
       const today = new Date();
       today.setHours(0, 0, 0, 0);
