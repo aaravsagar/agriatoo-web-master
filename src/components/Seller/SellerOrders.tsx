@@ -6,7 +6,7 @@ import { Order, User, DeliveryRecord } from '../../types';
 import { ORDER_STATUSES } from '../../config/constants';
 import { generateOrderQR } from '../../utils/qrUtils';
 import { format } from 'date-fns';
-import { Eye, Package, Printer, QrCode, UserPlus, Users, UserCheck, UserMinus } from 'lucide-react';
+import { Eye, Package, Printer, QrCode, UserPlus, Users, UserCheck, UserMinus, XCircle } from 'lucide-react';
 
 const SellerOrders: React.FC = () => {
   const { user } = useAuth();
