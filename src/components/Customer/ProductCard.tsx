@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ShoppingCart, MapPin, Check } from 'lucide-react';
+import { ShoppingCart, MapPin, Check, AlertTriangle } from 'lucide-react';
 import { Product } from '../../types';
+import { useStockManager } from '../../hooks/useStockManager';
 
 interface ProductCardProps {
   product: Product;
@@ -9,6 +10,7 @@ interface ProductCardProps {
 
 const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
   const [isAdding, setIsAdding] = useState(false);
+  const { isProductInStock, getProductStock } = useStockManager();
 
   // Defensive check - if product is undefined or null, don't render
   if (!product) {
@@ -32,9 +34,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
   const productCategory = product.category || 'Uncategorized';
   const productPrice = product.price || 0;
   const productUnit = product.unit || 'unit';
-  const productStock = product.stock || 0;
+  const productStock = getProductStock(product.id) ?? product.stock || 0;
   const productSellerName = product.sellerName || 'Unknown Seller';
   const productImages = product.images || [];
+  const isInStock = isProductInStock(product.id, 1);
+  const isLowStock = productStock > 0 && productStock <= 5;
 
   return (
     <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 overflow-hidden">
@@ -80,8 +84,12 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
             <MapPin className="w-4 h-4 flex-shrink-0" />
             <span className="truncate">By {productSellerName}</span>
           </div>
-          <div className="text-sm text-gray-500 whitespace-nowrap ml-2">
-            Stock: {productStock} {productUnit}
+          <div className={`text-sm whitespace-nowrap ml-2 flex items-center space-x-1 ${
+            productStock === 0 ? 'text-red-600' : 
+            isLowStock ? 'text-orange-600' : 'text-gray-500'
+          }`}>
+            {productStock === 0 && <AlertTriangle className="w-3 h-3" />}
+            <span>Stock: {productStock} {productUnit}</span>
           </div>
         </div>
         
@@ -91,6 +99,25 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
             Delivers to: {product.coveredPincodes?.length || 0} areas in Gujarat
           </div>
         </div>
+
+        {/* Stock status badges */}
+        {productStock === 0 && (
+          <div className="mb-3">
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+              <AlertTriangle className="w-3 h-3 mr-1" />
+              Out of Stock
+            </span>
+          </div>
+        )}
+        
+        {isLowStock && productStock > 0 && (
+          <div className="mb-3">
+            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+              <AlertTriangle className="w-3 h-3 mr-1" />
+              Low Stock
+            </span>
+          </div>
+        )}
         
         <div className="flex items-center justify-between">
           <div className="text-2xl font-bold text-green-600">
@@ -100,11 +127,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
           
           <button
             onClick={handleAddToCart}
-            disabled={productStock <= 0 || isAdding || !product.coveredPincodes?.length}
+            disabled={!isInStock || isAdding || !product.coveredPincodes?.length}
             className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all disabled:cursor-not-allowed ${
               isAdding
                 ? 'bg-green-700 text-white'
-                : productStock > 0 && product.coveredPincodes?.length
+                : isInStock && product.coveredPincodes?.length
                 ? 'bg-green-600 hover:bg-green-700 text-white'
                 : 'bg-gray-400 text-white'
             }`}
@@ -120,7 +147,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
                 <span>
                   {!product.coveredPincodes?.length 
                     ? 'No Delivery' 
-                    : productStock > 0 
+                    : isInStock 
                     ? 'Add to Cart' 
                     : 'Out of Stock'
                   }

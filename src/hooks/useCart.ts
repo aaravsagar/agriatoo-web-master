@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { CartItem, Product } from '../types';
+import { useStockManager } from './useStockManager';
 
 const CART_STORAGE_KEY = 'agriatoo_cart';
 
 export const useCart = () => {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
+  const { isProductInStock } = useStockManager();
 
   // Load cart from localStorage on mount
   useEffect(() => {
@@ -72,12 +74,26 @@ export const useCart = () => {
       return;
     }
 
+    // Check stock availability before adding
+    if (!isProductInStock(product.id, quantity)) {
+      console.warn('❌ Product out of stock:', product.name);
+      throw new Error(`${product.name} is out of stock or insufficient quantity available`);
+    }
+
     setCartItems(prev => {
       const existingItem = prev.find(item => item.productId === product.id);
       
       if (existingItem) {
         console.log('📦 Product already in cart, updating quantity');
-        const newQuantity = Math.min(existingItem.quantity + quantity, product.stock);
+        const requestedQuantity = existingItem.quantity + quantity;
+        
+        // Check if requested quantity is available
+        if (!isProductInStock(product.id, requestedQuantity)) {
+          console.warn('❌ Insufficient stock for requested quantity');
+          throw new Error(`Only ${product.stock} units available for ${product.name}`);
+        }
+        
+        const newQuantity = Math.min(requestedQuantity, product.stock);
         const updated = prev.map(item =>
           item.productId === product.id
             ? { ...item, quantity: newQuantity }
@@ -106,6 +122,12 @@ export const useCart = () => {
     if (quantity <= 0) {
       console.log('🗑️ Quantity is 0, removing item');
       removeFromCart(productId);
+      return;
+    }
+    
+    // Check stock availability for new quantity
+    if (!isProductInStock(productId, quantity)) {
+      console.warn('❌ Insufficient stock for requested quantity');
       return;
     }
     
