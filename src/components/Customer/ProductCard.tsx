@@ -29,6 +29,8 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
   const productDescription = product.description ?? 'No description available';
   const productCategory = product.category ?? 'Uncategorized';
   const productPrice = product.price ?? 0;
+  const productOriginalPrice = product.originalPrice;
+  const productDiscountedPrice = product.discountedPrice;
   const productUnit = product.unit ?? 'unit';
 
   // ✅ FIXED LINE (no operator conflict)
@@ -115,6 +117,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart }) => {
         <div className="flex justify-between items-center mt-4">
           <div className="text-2xl font-bold text-green-600">
             ₹{productPrice}
+            {productOriginalPrice && productOriginalPrice > productPrice && (
+              <span className="text-lg text-gray-400 line-through ml-2">
+                ₹{productOriginalPrice}
+              </span>
+            )}
             <span className="text-sm text-gray-500">/{productUnit}</span>
           </div>
 

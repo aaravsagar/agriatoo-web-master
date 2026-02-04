@@ -3,6 +3,7 @@ import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
 import { useStockManager } from '../../hooks/useStockManager';
+import { useNotifications } from '../../hooks/useNotifications';
 import { Package, ShoppingBag, TrendingUp, MapPin, AlertTriangle } from 'lucide-react';
 import { Product, Order } from '../../types';
 import SellerProducts from './SellerProducts';
@@ -12,6 +13,7 @@ import SellerProfile from './SellerProfile';
 const SellerDashboard: React.FC = () => {
   const { user } = useAuth();
   const { lowStockAlerts } = useStockManager();
+  const { notifications, unreadCount, markAllAsRead } = useNotifications();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState({
     totalProducts: 0,
@@ -196,6 +198,24 @@ const SellerDashboard: React.FC = () => {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-white">Seller Dashboard</h1>
           <p className="text-gray-400 mt-2">Welcome back, {user?.name}</p>
+          {unreadCount > 0 && (
+            <div className="mt-4 bg-blue-900 border border-blue-700 rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                  <span className="text-blue-300 font-medium">
+                    You have {unreadCount} unread notification{unreadCount > 1 ? 's' : ''}
+                  </span>
+                </div>
+                <button
+                  onClick={markAllAsRead}
+                  className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+                >
+                  Mark all as read
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="border-b border-gray-700 mb-8">

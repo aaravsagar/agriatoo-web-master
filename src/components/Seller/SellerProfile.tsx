@@ -54,9 +54,10 @@ const SellerProfile: React.FC = () => {
     console.log('Pincode changed to:', pincode);
     setFormData({ ...formData, pincode });
     if (isPincodeValid(pincode)) {
-      const covered = generateCoveredPincodes(pincode, formData.deliveryRadius);
-      console.log('Generated covered pincodes:', covered.length);
-      setCoveredPincodes(covered);
+      generateCoveredPincodes(pincode, formData.deliveryRadius).then(covered => {
+        console.log('Generated covered pincodes:', covered.length);
+        setCoveredPincodes(covered);
+      });
     } else {
       console.log('Invalid pincode');
       setCoveredPincodes([]);
@@ -67,9 +68,10 @@ const SellerProfile: React.FC = () => {
     console.log('Radius changed to:', radius);
     setFormData({ ...formData, deliveryRadius: radius });
     if (formData.pincode && isPincodeValid(formData.pincode)) {
-      const covered = generateCoveredPincodes(formData.pincode, radius);
-      console.log('Updated covered pincodes for radius:', covered.length);
-      setCoveredPincodes(covered);
+      generateCoveredPincodes(formData.pincode, radius).then(covered => {
+        console.log('Updated covered pincodes for radius:', covered.length);
+        setCoveredPincodes(covered);
+      });
     }
   };
 
@@ -89,7 +91,7 @@ const SellerProfile: React.FC = () => {
 
     try {
       // Generate covered pincodes for the seller
-      const newCoveredPincodes = generateCoveredPincodes(formData.pincode, formData.deliveryRadius);
+      const newCoveredPincodes = await generateCoveredPincodes(formData.pincode, formData.deliveryRadius);
       console.log('Final covered pincodes:', newCoveredPincodes);
       
       if (newCoveredPincodes.length === 0) {

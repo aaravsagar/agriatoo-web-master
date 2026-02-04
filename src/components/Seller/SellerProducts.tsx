@@ -23,6 +23,8 @@ const SellerProducts: React.FC = () => {
     description: '',
     category: PRODUCT_CATEGORIES[0],
     price: '',
+    originalPrice: '',
+    discountedPrice: '',
     unit: 'kg',
     stock: '',
     images: ['']
@@ -120,6 +122,8 @@ const SellerProducts: React.FC = () => {
         description: formData.description,
         category: formData.category,
         price: parseFloat(formData.price),
+        originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : undefined,
+        discountedPrice: formData.discountedPrice ? parseFloat(formData.discountedPrice) : undefined,
         unit: formData.unit,
         stock: parseInt(formData.stock),
         images: formData.images.filter(img => img.trim() !== ''),
@@ -225,6 +229,8 @@ const SellerProducts: React.FC = () => {
       description: '',
       category: PRODUCT_CATEGORIES[0],
       price: '',
+      originalPrice: '',
+      discountedPrice: '',
       unit: 'kg',
       stock: '',
       images: ['']
@@ -427,6 +433,11 @@ const SellerProducts: React.FC = () => {
                     <p className="text-2xl font-bold text-green-400">
                       ₹{product.price}
                     </p>
+                    {product.originalPrice && product.originalPrice > product.price && (
+                      <p className="text-sm text-gray-500 line-through">
+                        ₹{product.originalPrice}
+                      </p>
+                    )}
                     <p className="text-sm text-gray-400">per {product.unit}</p>
                   </div>
                 </div>
@@ -553,6 +564,28 @@ const SellerProducts: React.FC = () => {
                   className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
                 />
                 
+                <input
+                  type="number"
+                  placeholder="Original Price (optional)"
+                  value={formData.originalPrice}
+                  onChange={(e) => setFormData({ ...formData, originalPrice: e.target.value })}
+                  min="0"
+                  step="0.01"
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                
+                <input
+                  type="number"
+                  placeholder="Discounted Price (optional)"
+                  value={formData.discountedPrice}
+                  onChange={(e) => setFormData({ ...formData, discountedPrice: e.target.value })}
+                  min="0"
+                  step="0.01"
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <select
                   value={formData.unit}
                   onChange={(e) => setFormData({ ...formData, unit: e.target.value })}

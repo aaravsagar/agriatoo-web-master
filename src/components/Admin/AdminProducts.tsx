@@ -73,7 +73,7 @@ const AdminProducts: React.FC = () => {
 
       // Generate covered pincodes based on seller's location and delivery radius
       const coveredPincodes = sellerPincode ? 
-        generateCoveredPincodes(sellerPincode, sellerDeliveryRadius) : [];
+        await generateCoveredPincodes(sellerPincode, sellerDeliveryRadius) : [];
       
       if (sellerPincode && coveredPincodes.length === 0) {
         alert('No serviceable pincodes found for the seller. Please check seller\'s pincode.');
