@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../hooks/useAuth';
-import { generateCoveredPincodes, isPincodeValid } from '../../utils/pincodeUtils';
+import { generateCoveredPincodes, isPincodeValid, getPincodeInfo } from '../../utils/pincodeUtils';
 import { MapPin, Save } from 'lucide-react';
 
 const SellerProfile: React.FC = () => {
@@ -11,6 +11,8 @@ const SellerProfile: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error' | ''>('');
+  const [pincodeValidating, setPincodeValidating] = useState(false);
+  const [pincodeInfo, setPincodeInfo] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -53,13 +55,36 @@ const SellerProfile: React.FC = () => {
   const handlePincodeChange = (pincode: string) => {
     console.log('Pincode changed to:', pincode);
     setFormData({ ...formData, pincode });
-    if (isPincodeValid(pincode)) {
-      generateCoveredPincodes(pincode, formData.deliveryRadius).then(covered => {
-        console.log('Generated covered pincodes:', covered.length);
-        setCoveredPincodes(covered);
+    
+    if (pincode.length === 6) {
+      setPincodeValidating(true);
+      setPincodeInfo(null);
+      
+      Promise.all([
+        isPincodeValid(pincode),
+        getPincodeInfo(pincode)
+      ]).then(([isValid, info]) => {
+        setPincodeValidating(false);
+        
+        if (isValid && info) {
+          setPincodeInfo(info);
+          generateCoveredPincodes(pincode, formData.deliveryRadius).then(covered => {
+            console.log('Generated covered pincodes:', covered.length);
+            setCoveredPincodes(covered);
+          });
+        } else {
+          console.log('Invalid pincode');
+          setPincodeInfo(null);
+          setCoveredPincodes([]);
+        }
+      }).catch(error => {
+        console.error('Error validating pincode:', error);
+        setPincodeValidating(false);
+        setPincodeInfo(null);
+        setCoveredPincodes([]);
       });
     } else {
-      console.log('Invalid pincode');
+      setPincodeInfo(null);
       setCoveredPincodes([]);
     }
   };
@@ -67,10 +92,14 @@ const SellerProfile: React.FC = () => {
   const handleRadiusChange = (radius: number) => {
     console.log('Radius changed to:', radius);
     setFormData({ ...formData, deliveryRadius: radius });
-    if (formData.pincode && isPincodeValid(formData.pincode)) {
-      generateCoveredPincodes(formData.pincode, radius).then(covered => {
-        console.log('Updated covered pincodes for radius:', covered.length);
-        setCoveredPincodes(covered);
+    if (formData.pincode && formData.pincode.length === 6) {
+      isPincodeValid(formData.pincode).then(isValid => {
+        if (isValid) {
+          generateCoveredPincodes(formData.pincode, radius).then(covered => {
+            console.log('Updated covered pincodes for radius:', covered.length);
+            setCoveredPincodes(covered);
+          });
+        }
       });
     }
   };
@@ -81,8 +110,9 @@ const SellerProfile: React.FC = () => {
 
     console.log('Submitting profile update:', formData);
 
-    if (!isPincodeValid(formData.pincode)) {
-      showMessage('Please enter a valid PIN code from Gujarat', 'error');
+    const isValid = await isPincodeValid(formData.pincode);
+    if (!isValid) {
+      showMessage('Please enter a valid PIN code', 'error');
       return;
     }
 
@@ -95,7 +125,7 @@ const SellerProfile: React.FC = () => {
       console.log('Final covered pincodes:', newCoveredPincodes);
       
       if (newCoveredPincodes.length === 0) {
-        showMessage('No serviceable areas found for your pincode. Please enter a valid Gujarat pincode.', 'error');
+        showMessage('No serviceable areas found for your pincode. Please try a different pincode.', 'error');
         setSaving(false);
         return;
       }
@@ -124,7 +154,7 @@ const SellerProfile: React.FC = () => {
         // Update covered pincodes state
         setCoveredPincodes(newCoveredPincodes);
         
-        showMessage(`Profile updated successfully! You can now deliver to ${newCoveredPincodes.length} areas in Gujarat.`, 'success');
+        showMessage(`Profile updated successfully! You can now deliver to ${newCoveredPincodes.length} areas.`, 'success');
       } else {
         throw new Error('Failed to verify profile update');
       }
@@ -210,7 +240,7 @@ const SellerProfile: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                PIN Code (Gujarat Only)
+                PIN Code (Any Indian PIN Code)
               </label>
               <input
                 type="text"
@@ -218,11 +248,27 @@ const SellerProfile: React.FC = () => {
                 onChange={(e) => handlePincodeChange(e.target.value)}
                 required
                 maxLength={6}
-                placeholder="e.g., 380001 (Ahmedabad)"
+                placeholder="e.g., 110001, 400001, 380001"
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
               />
+              {pincodeValidating && (
+                <p className="text-xs text-blue-400 mt-1 flex items-center">
+                  <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin mr-2"></div>
+                  Validating pincode...
+                </p>
+              )}
+              {pincodeInfo && (
+                <p className="text-xs text-green-400 mt-1">
+                  ✓ {pincodeInfo.area}, {pincodeInfo.district}, {pincodeInfo.state}
+                </p>
+              )}
+              {formData.pincode.length === 6 && !pincodeValidating && !pincodeInfo && (
+                <p className="text-xs text-red-400 mt-1">
+                  ✗ Invalid or not found
+                </p>
+              )}
               <p className="text-xs text-gray-400 mt-1">
-                Enter a valid Gujarat PIN code to calculate delivery areas
+                Enter any valid Indian PIN code to calculate delivery areas
               </p>
             </div>
 
@@ -288,13 +334,13 @@ const SellerProfile: React.FC = () => {
           {formData.pincode && !isPincodeValid(formData.pincode) && (
             <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 p-3 rounded-lg">
               <p className="text-sm">
-                ⚠️ Invalid PIN code. Please enter a valid Gujarat PIN code to enable product creation.
+                ⚠️ Invalid PIN code. Please enter a valid Indian PIN code to enable product creation.
               </p>
             </div>
           )}
           <button
             type="submit"
-            disabled={saving || !formData.pincode || !isPincodeValid(formData.pincode)}
+            disabled={saving || !formData.pincode || pincodeValidating || !pincodeInfo}
             className="w-full flex items-center justify-center space-x-2 bg-green-600 text-white py-3 px-4 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Save className="w-5 h-5" />

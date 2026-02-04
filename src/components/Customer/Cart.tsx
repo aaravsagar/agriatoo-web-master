@@ -45,7 +45,7 @@ const Cart: React.FC = () => {
     if (!/^[6-9]\d{9}$/.test(customerDetails.phone)) return 'Invalid phone number';
     if (!customerDetails.address.trim()) return 'Address is required';
     if (!customerDetails.pincode.trim()) return 'PIN code is required';
-    if (!isPincodeValid(customerDetails.pincode)) return 'Invalid PIN code';
+    // Note: We'll validate pincode asynchronously in handlePlaceOrder
     
     // Check stock availability for all items
     for (const item of cartItems) {
@@ -79,6 +79,13 @@ const Cart: React.FC = () => {
   };
 
   const handlePlaceOrder = async () => {
+    // First validate the pincode using the API
+    const pincodeIsValid = await isPincodeValid(customerDetails.pincode);
+    if (!pincodeIsValid) {
+      setError('Invalid PIN code. Please enter a valid Indian PIN code.');
+      return;
+    }
+    
     const validationError = validateCheckout();
     if (validationError) {
       setError(validationError);
